@@ -9,53 +9,11 @@ use std::{
 use anyhow::bail;
 use clap::{Args, Parser};
 
+mod multi_trie;
 mod trie;
 
+pub use multi_trie::MultiTrie;
 pub use trie::Trie;
-
-struct MultiTrie {
-    pub inner: Vec<Trie>,
-}
-
-impl MultiTrie {
-    fn new() -> Self {
-        MultiTrie { inner: Vec::new() }
-    }
-
-    pub fn contains(&self, word: &str) -> bool {
-        for trie in &self.inner {
-            if trie.contains(word) {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn handle_identifier(&self, word: &str) -> bool {
-        let splitters = [
-            ' ', '_', '-', '\n', '\t', '(', ')', '{', '}', '[', ']', ',', '.', ';', ':', '?', '!',
-            '"', '\'', '&', '/', '\\', '|', '<', '>', '=', '+', '-', '*', '%', '^', '~', '`', '@',
-            '#', '$', '!', '?', ':', ';', '(', ')', '{', '}', '[', ']', ',', '.', '/', '\\',
-        ];
-        let parts = word
-            .split(|c| splitters.contains(&c))
-            .filter(|part| part.len() > 1)
-            .collect::<Vec<_>>();
-        for part in &parts {
-            if !self.contains(&part.to_ascii_lowercase()) {
-                // check if part is fully numeric
-                if part.chars().all(|c| c.is_numeric()) {
-                    continue;
-                } else {
-                    println!("Parts: {:?}", &parts);
-                    println!("Word not found: {}", part);
-                    return false;
-                }
-            }
-        }
-        true
-    }
-}
 
 #[derive(Clone, Debug, Args)]
 pub struct CheckArgs {
