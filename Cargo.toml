@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.98"
+bincode = "2.0.1"
+clap = { version = "4.5.37", features = ["derive"] }
+ignore = "0.4.23"
+tree-sitter = "0.25.3"
+tree-sitter-rust = "0.24.0"
