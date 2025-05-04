@@ -46,12 +46,13 @@ fn handle_node(words: &MultiTrie, node: &tree_sitter::Node, source_code: &str) -
     let mut typos = Vec::new();
     if node.is_named() {
         for word in text.split_whitespace() {
-            if word.len() > 1 && !words.handle_identifier(word) {
-                let line = node.start_position().row + 1;
-                let column = node.start_position().column + 1;
-                let word = word.to_string();
-                let typo = Typo { line, column, word };
-                typos.push(typo);
+            if word.len() > 1 {
+                if let Some(typo) = words.handle_identifier(word) {
+                    let line = node.start_position().row + 1;
+                    let column = node.start_position().column + 1;
+                    let typo = Typo { line, column, word: typo };
+                    typos.push(typo);
+                }
             }
         }
     }
@@ -80,7 +81,7 @@ fn get_or_compile_wordlist(name: &str) -> anyhow::Result<Trie> {
 
 fn get_trie(file: &PathBuf) -> MultiTrie {
     let mut trie = MultiTrie::new();
-    let tries = vec!["extra", "software_terms", "software_tools", "words"];
+    let tries = vec!["custom", "extra", "software_terms", "software_tools", "words"];
     match get_file_extension(file).unwrap().as_str() {
         "rs" => {
             trie.inner.push(get_or_compile_wordlist("rust").unwrap());
@@ -176,19 +177,16 @@ fn check(args: CheckArgs, settings: &Settings) -> anyhow::Result<()> {
 
     for file in files {
         let result = check_file(&file)?;
-        if result.typos.is_empty() {
-            println!("{} has no typos", file.display());
-        } else {
+        if !result.typos.is_empty() {
             let typo_word = if result.typos.len() == 1 {
                 "typo"
             } else {
                 "typos"
             };
-            println!("{} has {} {typo_word}", file.display(), result.typos.len());
             for typo in result.typos {
                 println!(
-                    "Line: {}, Column: {}, Word: {}",
-                    typo.line, typo.column, typo.word
+                    "{}:{}:{}: Unknown word: {}",
+                    file.display(), typo.line, typo.column, typo.word
                 );
             }
         }

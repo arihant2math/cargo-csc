@@ -19,7 +19,7 @@ impl MultiTrie {
         false
     }
 
-    fn check_parts(&self, parts: &[&str]) -> bool {
+    fn check_parts(&self, parts: &[&str]) -> Option<String> {
         fn split_by_capitalization(word: &str) -> Vec<String> {
             let mut parts = Vec::new();
             let mut current_part = String::new();
@@ -52,17 +52,15 @@ impl MultiTrie {
                     if found {
                         continue;
                     } else {
-                        println!("Parts: {:?}", &parts);
-                        println!("Word not found: {}", part);
-                        return false;
+                        return Some(part.to_string());
                     }
                 }
             }
         }
-        true
+        None
     }
 
-    pub fn handle_identifier(&self, word: &str) -> bool {
+    pub fn handle_identifier(&self, word: &str) -> Option<String> {
         let splitters = [
             ' ', '_', '-', '\n', '\t', '(', ')', '{', '}', '[', ']', ',', '.', ';', ':', '?', '!',
             '"', '\'', '&', '/', '\\', '|', '<', '>', '=', '+', '-', '*', '%', '^', '~', '`', '@',
