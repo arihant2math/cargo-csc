@@ -6,6 +6,8 @@ pub struct DictionaryDefinition {
     pub path: String,
     #[serde(default)]
     pub globs: Vec<String>,
+    #[serde(default)]
+    pub compile: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,14 +18,23 @@ pub struct Settings {
     pub dictionary_definitions: Vec<DictionaryDefinition>,
     #[serde(default)]
     pub ignore_paths: Vec<String>,
+    #[serde(default)]
+    pub words: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            dictionaries: vec!["extra".to_string(), "software_terms".to_string(), "software_tools".to_string(), "words".to_string()],
+            dictionaries: vec![
+                "extra".to_string(),
+                "en-US".to_string(),
+                "software_terms".to_string(),
+                "software_tools".to_string(),
+                "words".to_string(),
+            ],
             dictionary_definitions: vec![],
             ignore_paths: vec![],
+            words: vec![],
         }
     }
 }

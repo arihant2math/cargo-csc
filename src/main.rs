@@ -85,69 +85,95 @@ fn handle_node(words: &MultiTrie, node: &tree_sitter::Node, source_code: &str) -
     typos
 }
 
-fn compile_wordlist(path: &str) -> anyhow::Result<()> {
-    let mut trie = Trie::append_wordlist(store_path().join(format!("{path}.txt")))?;
+fn compile_wordlist<P: AsRef<Path>>(path: P, output: P) -> anyhow::Result<()> {
+    let trie = Trie::from_wordlist(&path)?;
     let data = trie.dump();
-    let out_path = store_path().join(format!("{}.bin", path));
-    fs::write(&out_path, data)?;
+    fs::write(&output, data)?;
     let hash_store_path = store_path().join("wordlist_hashes.json");
     let mut hash_store =
         TrieHashStore::load_from_file(&hash_store_path).unwrap_or_else(|_| TrieHashStore::new());
-    let hash = hash_file(store_path().join(format!("{path}.txt")))?;
+    let hash = hash_file(path.as_ref())?;
 
-    hash_store.0.insert(path.to_string(), hash);
+    hash_store
+        .0
+        .insert(path.as_ref().display().to_string(), hash);
     hash_store.dump_to_file(&hash_store_path)?;
     Ok(())
 }
 
-fn hash_file<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<String> {
-    let text =
-        fs::read(&path).with_context(|| format!("Failed to read file: {}", path.as_ref().display()))?;
+fn hash_file<P: AsRef<Path>>(path: P) -> anyhow::Result<String> {
+    let text = fs::read(&path)
+        .with_context(|| format!("Failed to read file: {}", path.as_ref().display()))?;
     Ok(blake3::hash(&text).to_hex().to_string())
 }
 
-fn get_or_compile_wordlist(name: &str) -> anyhow::Result<Trie> {
-    let path = store_path().join(format!("{}.bin", name));
-    let hash_store = TrieHashStore::load_from_file(store_path().join("wordlist_hashes.json"))
-        .unwrap_or_else(|_| TrieHashStore::new());
-    let hash = hash_file(store_path().join(format!("{}.txt", name)))
-        .context(format!("Failed to hash wordlist: {}", name))?;
-    if !PathBuf::from(&path).exists() {
-        compile_wordlist(name).context(format!("Failed to compile wordlist to trie: {}", name))?;
-    }
-    if let Some(stored_hash) = hash_store.0.get(name) {
-        if stored_hash != &hash {
-            compile_wordlist(name)
+fn get_or_compile_wordlist(
+    name: &str,
+    definitions: &[settings::DictionaryDefinition],
+) -> anyhow::Result<Trie> {
+    let definition = definitions
+        .iter()
+        .find(|def| def.name == name)
+        .cloned()
+        .unwrap_or(settings::DictionaryDefinition {
+            name: name.to_string(),
+            path: store_path()
+                .join(format!("{}.txt", name))
+                .to_string_lossy()
+                .to_string(),
+            globs: vec![],
+            compile: true,
+        });
+    if definition.compile {
+        let parent = Path::new(&definition.path)
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        let text_path = PathBuf::from(&definition.path);
+        let bin_path = parent.join(format!("{}.bin", name));
+
+        let hash_store = TrieHashStore::load_from_file(store_path().join("wordlist_hashes.json"))
+            .unwrap_or_else(|_| TrieHashStore::new());
+        let hash = hash_file(store_path().join(format!("{}.txt", name)))
+            .context(format!("Failed to hash wordlist: {}", name))?;
+        if !bin_path.exists() {
+            compile_wordlist(&text_path, &bin_path)
                 .context(format!("Failed to compile wordlist to trie: {}", name))?;
         }
+        if let Some(stored_hash) = hash_store.0.get(name) {
+            if stored_hash != &hash {
+                compile_wordlist(&text_path, &bin_path)
+                    .context(format!("Failed to compile wordlist to trie: {}", name))?;
+            }
+        } else {
+            compile_wordlist(&text_path, &bin_path)
+                .context(format!("Failed to compile wordlist to trie: {}", name))?;
+        }
+        Ok(Trie::load_from_file(bin_path)
+            .context(format!("Failed to load trie binary: {}", name))?)
     } else {
-        compile_wordlist(name).context(format!("Failed to compile wordlist to trie: {}", name))?;
+        Ok(Trie::from_wordlist(&definition.path)
+            .context(format!("Failed to load wordlist: {}", name))?)
     }
-    Ok(Trie::load_from_file(path).context(format!("Failed to load trie binary: {}", name))?)
 }
 
 fn get_trie(file: &PathBuf, settings: &Settings) -> anyhow::Result<MultiTrie> {
     let mut trie = MultiTrie::new();
-    let mut tries = vec![
-        "custom",
-        "extra",
-        "software_terms",
-        "software_tools",
-        "words",
-    ];
+    let mut tries = settings.dictionaries.clone();
     match get_file_extension(file).unwrap().as_str() {
         "rs" => {
-            tries.push("rust");
+            tries.push("rust".to_string());
         }
         e => {
             panic!("Unsupported file type: {:?}", e);
         }
     }
     for name in tries {
-        let trie_instance =
-            get_or_compile_wordlist(name).context(format!("Failed to load wordlist: {}", name))?;
+        let trie_instance = get_or_compile_wordlist(&name, &settings.dictionary_definitions)
+            .context(format!("Failed to load wordlist: {}", &name))?;
         trie.inner.push(trie_instance);
     }
+    let custom_trie = Trie::from_iterator(settings.words.iter().map(|s| s.as_str()));
+    trie.inner.push(custom_trie);
     Ok(trie)
 }
 
@@ -234,8 +260,8 @@ fn check(args: CheckArgs, settings: &Settings) -> anyhow::Result<()> {
     files
         .par_iter()
         .try_for_each(|file| -> anyhow::Result<()> {
-            let result =
-                check_file(file, settings).context(format!("Failed to check file: {}", file.display()))?;
+            let result = check_file(file, settings)
+                .context(format!("Failed to check file: {}", file.display()))?;
             if !result.typos.is_empty() {
                 for typo in result.typos.iter() {
                     println!(
@@ -275,7 +301,10 @@ fn main() -> anyhow::Result<()> {
                 .collect::<Vec<_>>();
             // compile each wordlist
             for list in lists {
-                compile_wordlist(&list)?;
+                let text_path = store_path().join(format!("{}.txt", list));
+                let bin_path = store_path().join(format!("{}.bin", list));
+                compile_wordlist(text_path, bin_path)
+                    .context(format!("Failed to compile wordlist: {}", list))?;
             }
         }
         CliArgs::Cache(CacheCommand::Clear) => {

@@ -6,7 +6,12 @@
         }
     ],
     "dictionaries": [
-        "custom"
+        "custom",
+        "en-US",
+        "extra",
+        "software_terms",
+        "software_tools",
+        "words"
     ],
     "ignore_paths": [
         "**/target/**",

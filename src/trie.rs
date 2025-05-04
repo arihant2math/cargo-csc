@@ -1,3 +1,4 @@
+use core::str;
 use std::collections::HashMap;
 use std::io::BufRead;
 
@@ -68,25 +69,13 @@ impl Trie {
         let mut trie = Trie::new();
         for line in reader.lines() {
             let line = line?;
-            if !line.is_empty() {
-                trie.insert(&line.to_ascii_lowercase());
-            }
-        }
-        Ok(trie)
-    }
-
-    pub fn append_wordlist<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
-        let file = std::fs::File::open(path)?;
-        let reader = std::io::BufReader::new(file);
-        let mut trie = Trie::new();
-        for line in reader.lines() {
-            let line = line?;
-            let real_line = line.trim();
-            if real_line.starts_with("//") || real_line.starts_with("#") {
+            let stripped_line = line.trim();
+            // Ignore empty lines and comments
+            if stripped_line.starts_with('#') || stripped_line.starts_with("//") {
                 continue;
             }
-            if !real_line.is_empty() {
-                trie.append_from_iterator(vec![real_line.to_ascii_lowercase()]);
+            if !stripped_line.is_empty() {
+                trie.insert(&stripped_line.to_ascii_lowercase());
             }
         }
         Ok(trie)
