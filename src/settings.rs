@@ -21,7 +21,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            dictionaries: vec![],
+            dictionaries: vec!["extra".to_string(), "software_terms".to_string(), "software_tools".to_string(), "words".to_string()],
             dictionary_definitions: vec![],
             ignore_paths: vec![],
         }
@@ -60,4 +60,3 @@ impl Settings {
         }
     }
 }
-

@@ -1,5 +1,5 @@
-use std::io::BufRead;
 use std::collections::HashMap;
+use std::io::BufRead;
 
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
@@ -62,16 +62,34 @@ impl Trie {
         Ok(Trie::load(&data))
     }
 
-    pub fn append_wordlist<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
+    pub fn from_wordlist<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
         let file = std::fs::File::open(path)?;
         let reader = std::io::BufReader::new(file);
+        let mut trie = Trie::new();
         for line in reader.lines() {
             let line = line?;
             if !line.is_empty() {
-                self.insert(&line.to_ascii_lowercase());
+                trie.insert(&line.to_ascii_lowercase());
             }
         }
-        Ok(())
+        Ok(trie)
+    }
+
+    pub fn append_wordlist<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(file);
+        let mut trie = Trie::new();
+        for line in reader.lines() {
+            let line = line?;
+            let real_line = line.trim();
+            if real_line.starts_with("//") || real_line.starts_with("#") {
+                continue;
+            }
+            if !real_line.is_empty() {
+                trie.append_from_iterator(vec![real_line.to_ascii_lowercase()]);
+            }
+        }
+        Ok(trie)
     }
 
     pub fn insert(&mut self, word: &str) {
@@ -108,7 +126,8 @@ impl TrieHashStore {
 
     pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
         let data = std::fs::read(path)?;
-        let store: TrieHashStore = serde_json::from_slice(&data).expect("Failed to deserialize TrieHashStore");
+        let store: TrieHashStore = serde_json::from_slice(&data).unwrap_or_default();
+
         Ok(store)
     }
 
