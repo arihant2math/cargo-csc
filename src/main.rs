@@ -1,13 +1,16 @@
 use std::{
-    collections::HashMap, fs::{self, File}, io::{self, Read}, path::{Path, PathBuf}
+    collections::HashMap,
+    fs::{self, File},
+    io::{self, Read},
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
 use rayon::prelude::*;
 
-
 mod dictionary;
+mod filesystem;
 mod multi_trie;
 mod settings;
 mod trie;
@@ -30,7 +33,8 @@ fn store_path() -> PathBuf {
 #[derive(Clone, Debug, Args)]
 pub struct CheckArgs {
     /// The path to the folder to search
-    glob: String,
+    dir: PathBuf,
+    glob: Option<String>,
     /// Which files/folders to exclude from the search
     #[clap(short, long)]
     exclude: Vec<String>,
@@ -61,6 +65,42 @@ pub enum CliArgs {
     Cache(CacheCommand),
 }
 
+pub fn get_file_extension(file: &PathBuf) -> Option<String> {
+    file.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_string())
+}
+
+fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Parser)> {
+    let file = File::open(path)?;
+    let mut reader = io::BufReader::new(file);
+    let mut source_code = String::new();
+    reader.read_to_string(&mut source_code)?;
+    let mut parser = tree_sitter::Parser::new();
+    match get_file_extension(path).unwrap().as_str() {
+        "go" => {
+            parser.set_language(&tree_sitter_go::LANGUAGE.into())?;
+        }
+        "rs" => {
+            parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
+        }
+        "toml" => {
+            parser.set_language(&tree_sitter_toml_ng::LANGUAGE.into())?;
+        }
+        "js" => {
+            parser.set_language(&tree_sitter_javascript::LANGUAGE.into())?;
+        }
+        "py" => {
+            parser.set_language(&tree_sitter_python::LANGUAGE.into())?;
+        }
+        e => {
+            bail!("Unsupported file type: {}", e);
+        }
+    }
+    Ok((source_code, parser))
+}
+
+
 fn handle_node(words: &MultiTrie, node: &tree_sitter::Node, source_code: &str) -> Vec<Typo> {
     let start_byte = node.start_byte();
     let end_byte = node.end_byte();
@@ -88,146 +128,6 @@ fn handle_node(words: &MultiTrie, node: &tree_sitter::Node, source_code: &str) -
     typos
 }
 
-fn get_wordlist<P: AsRef<Path>>(name: &str, dir: P) -> anyhow::Result<Option<Trie>> {
-    let path = dir.as_ref().join(format!("{}.txt", name));
-    let dir_option = dir.as_ref().join(name);
-    if path.exists() {
-        Trie::from_wordlist(&path)
-            .context(format!("Failed to load wordlist: {}", name))
-    } else if path.with_extension("dic").exists() {
-        Trie::from_wordlist(&path.with_extension("dic"))
-            .context(format!("Failed to load wordlist: {}", name))
-    } else if dir_option.exists() && dir_option.is_dir() {
-        Trie::from_directory(&dir_option)
-            .context(format!("Failed to load wordlist: {}", name))
-    }
-    Ok(None)
-}
-
-fn compile_wordlist<P: AsRef<Path>>(path: P, output: P) -> anyhow::Result<()> {
-    let trie = Trie::from_wordlist(&path)?;
-    let data = trie.dump();
-    fs::write(&output, data)?;
-    let hash_store_path = store_path().join("wordlist_hashes.json");
-    let mut hash_store =
-        TrieHashStore::load_from_file(&hash_store_path).unwrap_or_else(|_| TrieHashStore::new());
-    let hash = hash_file(path.as_ref())?;
-
-    hash_store
-        .0
-        .insert(path.as_ref().display().to_string(), hash);
-    hash_store.dump_to_file(&hash_store_path)?;
-    Ok(())
-}
-
-fn hash_file<P: AsRef<Path>>(path: P) -> anyhow::Result<String> {
-    let text = fs::read(&path)
-        .with_context(|| format!("Failed to read file: {}", path.as_ref().display()))?;
-    Ok(blake3::hash(&text).to_hex().to_string())
-}
-
-fn get_or_compile_wordlist(
-    name: &str,
-    definitions: &[settings::DictionaryDefinition],
-) -> anyhow::Result<Trie> {
-    let definition = definitions
-        .iter()
-        .find(|def| def.name == name)
-        .cloned()
-        .unwrap_or(settings::DictionaryDefinition {
-            name: name.to_string(),
-            path: store_path()
-                .join(format!("{}.txt", name))
-                .to_string_lossy()
-                .to_string(),
-            globs: vec![],
-            compile: true,
-        });
-    let aliases = HashMap::from([
-        ("en_US", "en-US"),
-        ("softwareTerms", "software_terms"),
-    ]);
-    if let Some(alias) = aliases.get(name) {
-        if !definitions.iter().any(|def| &def.name == alias) {
-            return get_or_compile_wordlist(alias, definitions);
-        }
-    }
-    if definition.compile {
-        let parent = Path::new(&definition.path)
-            .parent()
-            .unwrap_or_else(|| Path::new("."));
-        let text_path = PathBuf::from(&definition.path);
-        let bin_path = parent.join(format!("{}.bin", name));
-
-        let hash_store = TrieHashStore::load_from_file(store_path().join("wordlist_hashes.json"))
-            .unwrap_or_else(|_| TrieHashStore::new());
-        let hash = hash_file(store_path().join(format!("{}.txt", name)))
-            .context(format!("Failed to hash wordlist: {}", name))?;
-        if !bin_path.exists() {
-            compile_wordlist(&text_path, &bin_path)
-                .context(format!("Failed to compile wordlist to trie: {}", name))?;
-        }
-        if let Some(stored_hash) = hash_store.0.get(name) {
-            if stored_hash != &hash {
-                compile_wordlist(&text_path, &bin_path)
-                    .context(format!("Failed to compile wordlist to trie: {}", name))?;
-            }
-        } else {
-            compile_wordlist(&text_path, &bin_path)
-                .context(format!("Failed to compile wordlist to trie: {}", name))?;
-        }
-        Ok(Trie::load_from_file(bin_path)
-            .context(format!("Failed to load trie binary: {}", name))?)
-    } else {
-        Ok(Trie::from_wordlist(&definition.path)
-            .context(format!("Failed to load wordlist: {}", name))?)
-    }
-}
-
-fn get_trie(file: &PathBuf, settings: &Settings) -> anyhow::Result<MultiTrie> {
-    let mut trie = MultiTrie::new();
-    let mut tries = settings.dictionaries.clone();
-    match get_file_extension(file).unwrap().as_str() {
-        "rs" => {
-            tries.push("rust".to_string());
-        }
-        e => {
-            panic!("Unsupported file type: {:?}", e);
-        }
-    }
-    for name in tries {
-        let trie_instance = get_or_compile_wordlist(&name, &settings.dictionary_definitions)
-            .context(format!("Failed to load wordlist: {}", &name))?;
-        trie.inner.push(trie_instance);
-    }
-    let custom_trie = Trie::from_iterator(settings.words.iter().map(|s| s.to_string()));
-    trie.inner.push(custom_trie);
-    Ok(trie)
-}
-
-fn get_file_extension(file: &PathBuf) -> Option<String> {
-    file.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_string())
-}
-
-fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Parser)> {
-    let file = File::open(path)?;
-    let mut reader = io::BufReader::new(file);
-    let mut source_code = String::new();
-    reader.read_to_string(&mut source_code)?;
-    let mut parser = tree_sitter::Parser::new();
-    match get_file_extension(path).unwrap().as_str() {
-        "rs" => {
-            parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
-        }
-        e => {
-            bail!("Unsupported file type: {}", e);
-        }
-    }
-    Ok((source_code, parser))
-}
-
 #[derive(Debug)]
 struct Typo {
     line: usize,
@@ -244,7 +144,7 @@ fn check_file(file: &PathBuf, settings: &Settings) -> anyhow::Result<CheckFileRe
     let (source_code, mut parser) =
         get_code(file).context(format!("Failed to get code for file: {}", file.display()))?;
 
-    let dict = get_trie(file, settings).context(format!(
+    let dict = filesystem::get_trie(file, settings).context(format!(
         "Failed to load dictionary set for file: {}",
         file.display()
     ))?;
@@ -261,22 +161,20 @@ fn check_file(file: &PathBuf, settings: &Settings) -> anyhow::Result<CheckFileRe
 fn check(args: CheckArgs) -> anyhow::Result<()> {
     let settings = settings::Settings::load(args.settings.map(|p| p.display().to_string()));
 
-    let mut files = Vec::new();
-    for entry in glob::glob_with(&args.glob, glob::MatchOptions::default())? {
-        match entry {
-            Ok(entry) => {
-                for exclude in &args.exclude {
-                    if glob::Pattern::new(exclude)?.matches_path(&entry) {
-                        continue;
-                    }
-                }
-                files.push(entry);
-            }
-            Err(err) => {
-                eprintln!("Globbing Error: {}", err);
-            }
-        }
+    // TODO: path my not be "."
+    let mut walker = ignore::WalkBuilder::new(&args.dir);
+    for exclude in &args.exclude {
+        walker.add_custom_ignore_filename(exclude);
     }
+
+    let pattern = glob::Pattern::new(&args.glob.unwrap_or("**/*.*".to_string()))?;
+    let files = walker.build().collect::<Result<Vec<_>, _>>()?;
+    let files: Vec<_> = files
+        .into_iter()
+        .map(|d| d.into_path())
+        .filter(|f| f.is_file())
+        .filter(|f| pattern.matches_path(f))
+        .collect();
 
     if files.is_empty() {
         bail!("No files found");
@@ -332,7 +230,7 @@ fn main() -> anyhow::Result<()> {
             for list in lists {
                 let text_path = store_path().join(format!("{}.txt", list));
                 let bin_path = store_path().join(format!("{}.bin", list));
-                compile_wordlist(text_path, bin_path)
+                filesystem::compile_wordlist(text_path, bin_path)
                     .context(format!("Failed to compile wordlist: {}", list))?;
             }
         }

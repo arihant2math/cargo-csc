@@ -2,12 +2,18 @@ use core::str;
 use std::collections::HashMap;
 use std::io::BufRead;
 
+use anyhow::bail;
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Encode, Decode)]
+pub struct TrieData {
+
+}
+
+#[derive(Default, Debug, Encode, Decode)]
 struct TrieNode {
-    is_end_of_word: bool,
+    data: Option<TrieData>,
     children: HashMap<char, TrieNode>,
 }
 
@@ -43,24 +49,24 @@ impl Trie {
         }
     }
 
-    pub fn dump(&self) -> Vec<u8> {
-        bincode::encode_to_vec(&self, bincode::config::standard()).unwrap()
+    pub fn dump(&self) -> anyhow::Result<Vec<u8>> {
+        Ok(bincode::encode_to_vec(&self, bincode::config::standard())?)
     }
 
-    pub fn load(data: &[u8]) -> Self {
-        bincode::decode_from_slice(data, bincode::config::standard())
-            .map(|(trie, _)| trie)
-            .unwrap()
+    pub fn load(data: &[u8]) -> anyhow::Result<Self> {
+        Ok(bincode::decode_from_slice(data, bincode::config::standard())
+            .map(|(trie, _)| trie)?)
     }
 
-    pub fn dump_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> std::io::Result<()> {
-        let data = self.dump();
-        std::fs::write(path, data)
+    pub fn dump_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> anyhow::Result<()> {
+        let data = self.dump()?;
+        std::fs::write(path, data)?;
+        Ok(())
     }
 
-    pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
+    pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
         let data = std::fs::read(path)?;
-        Ok(Trie::load(&data))
+        Ok(Trie::load(&data)?)
     }
 
     pub fn from_wordlist<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
@@ -84,7 +90,11 @@ impl Trie {
     pub fn from_directory<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
         // code-spellcheck.json must exist
         let path = path.as_ref().join("code-spellcheck.json");
-        todo!()
+        if !path.exists() {
+            bail!("code-spellcheck.json is not found in the path");
+        }
+        todo!();
+        
     }
 
     pub fn insert(&mut self, word: &str) {
@@ -93,7 +103,7 @@ impl Trie {
         for c in word.chars() {
             current_node = current_node.children.entry(c).or_default();
         }
-        current_node.is_end_of_word = true;
+        current_node.data = Some(TrieData::default());
     }
 
     pub fn contains(&self, word: &str) -> bool {
@@ -106,7 +116,11 @@ impl Trie {
             }
         }
 
-        current_node.is_end_of_word
+        if let Some(ref data) = current_node.data {
+            return true;
+        } else {
+            return false;
+        }
     }
 }
 
