@@ -14,9 +14,9 @@ pub struct DictionaryDefinition {
 pub struct Settings {
     #[serde(default)]
     pub dictionaries: Vec<String>,
-    #[serde(default)]
+    #[serde(default, alias = "dictionaryDefinitions")]
     pub dictionary_definitions: Vec<DictionaryDefinition>,
-    #[serde(default)]
+    #[serde(default, alias = "ignorePaths")]
     pub ignore_paths: Vec<String>,
     #[serde(default)]
     pub words: Vec<String>,
@@ -46,7 +46,7 @@ impl Settings {
 
     pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
         let data = std::fs::read_to_string(path)?;
-        let settings: Settings = serde_json::from_str(&data)?;
+        let settings: Settings = serde_hjson::from_str(&data)?;
         Ok(settings)
     }
 

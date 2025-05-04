@@ -1,13 +1,13 @@
 use std::{
-    fs::{self, File},
-    io::{self, Read},
-    path::{Path, PathBuf},
+    collections::HashMap, fs::{self, File}, io::{self, Read}, path::{Path, PathBuf}
 };
 
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
 use rayon::prelude::*;
 
+
+mod dictionary;
 mod multi_trie;
 mod settings;
 mod trie;
@@ -39,6 +39,8 @@ pub struct CheckArgs {
     follow_symlinks: bool,
     #[clap(long)]
     max_filesize: Option<u64>,
+    #[clap(long)]
+    settings: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -85,6 +87,22 @@ fn handle_node(words: &MultiTrie, node: &tree_sitter::Node, source_code: &str) -
     typos
 }
 
+fn get_wordlist<P: AsRef<Path>>(name: &str, dir: P) -> anyhow::Result<Option<Trie>> {
+    let path = dir.as_ref().join(format!("{}.txt", name));
+    let dir_option = dir.as_ref().join(name);
+    if path.exists() {
+        Trie::from_wordlist(&path)
+            .context(format!("Failed to load wordlist: {}", name))
+    } else if path.with_extension("dic").exists() {
+        Trie::from_wordlist(&path.with_extension("dic"))
+            .context(format!("Failed to load wordlist: {}", name))
+    } else if dir_option.exists() && dir_option.is_dir() {
+        Trie::from_directory(&dir_option)
+            .context(format!("Failed to load wordlist: {}", name))
+    }
+    Ok(None)
+}
+
 fn compile_wordlist<P: AsRef<Path>>(path: P, output: P) -> anyhow::Result<()> {
     let trie = Trie::from_wordlist(&path)?;
     let data = trie.dump();
@@ -124,6 +142,15 @@ fn get_or_compile_wordlist(
             globs: vec![],
             compile: true,
         });
+    let aliases = HashMap::from([
+        ("en_US", "en-US"),
+        ("softwareTerms", "software_terms"),
+    ]);
+    if let Some(alias) = aliases.get(name) {
+        if !definitions.iter().any(|def| &def.name == alias) {
+            return get_or_compile_wordlist(alias, definitions);
+        }
+    }
     if definition.compile {
         let parent = Path::new(&definition.path)
             .parent()
@@ -172,7 +199,7 @@ fn get_trie(file: &PathBuf, settings: &Settings) -> anyhow::Result<MultiTrie> {
             .context(format!("Failed to load wordlist: {}", &name))?;
         trie.inner.push(trie_instance);
     }
-    let custom_trie = Trie::from_iterator(settings.words.iter().map(|s| s.as_str()));
+    let custom_trie = Trie::from_iterator(settings.words.iter().map(|s| s.to_string()));
     trie.inner.push(custom_trie);
     Ok(trie)
 }
@@ -230,9 +257,11 @@ fn check_file(file: &PathBuf, settings: &Settings) -> anyhow::Result<CheckFileRe
     Ok(result)
 }
 
-fn check(args: CheckArgs, settings: &Settings) -> anyhow::Result<()> {
+fn check(args: CheckArgs) -> anyhow::Result<()> {
+    let settings = settings::Settings::load(args.settings.map(|p| p.display().to_string()));
+
     let mut files = Vec::new();
-    for entry in glob::glob(&args.glob)? {
+    for entry in glob::glob_with(&args.glob, glob::MatchOptions::default())? {
         match entry {
             Ok(entry) => {
                 for exclude in &args.exclude {
@@ -260,7 +289,7 @@ fn check(args: CheckArgs, settings: &Settings) -> anyhow::Result<()> {
     files
         .par_iter()
         .try_for_each(|file| -> anyhow::Result<()> {
-            let result = check_file(file, settings)
+            let result = check_file(file, &settings)
                 .context(format!("Failed to check file: {}", file.display()))?;
             if !result.typos.is_empty() {
                 for typo in result.typos.iter() {
@@ -280,11 +309,10 @@ fn check(args: CheckArgs, settings: &Settings) -> anyhow::Result<()> {
 
 fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
-    let settings = settings::Settings::load(None);
 
     match args {
         CliArgs::Check(args) => {
-            check(args, &settings)?;
+            check(args)?;
         }
         CliArgs::Cache(CacheCommand::Build) => {
             // list all txt files in wordlists
