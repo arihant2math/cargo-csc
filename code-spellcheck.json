@@ -1,0 +1,15 @@
+{
+    "dictionary_definitions": [
+        {
+            "name": "custom",
+            "path": "./custom.txt"
+        }
+    ],
+    "dictionaries": [
+        "custom"
+    ],
+    "ignore_paths": [
+        "**/target/**",
+        "**/node_modules/**"
+    ]
+}

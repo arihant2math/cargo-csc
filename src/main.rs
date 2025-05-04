@@ -1,6 +1,4 @@
 use std::{
-    any,
-    fmt::format,
     fs::{self, File},
     io::{self, Read},
     path::PathBuf,
@@ -10,15 +8,17 @@ use anyhow::bail;
 use clap::{Args, Parser};
 
 mod multi_trie;
+mod settings;
 mod trie;
 
 pub use multi_trie::MultiTrie;
+use settings::Settings;
 pub use trie::Trie;
 
 #[derive(Clone, Debug, Args)]
 pub struct CheckArgs {
     /// The path to the folder to search
-    search_path: PathBuf,
+    glob: String,
     /// Which files/folders to exclude from the search
     #[clap(short, long)]
     exclude: Vec<String>,
@@ -36,24 +36,29 @@ pub enum CliArgs {
     /// Check for typos
     Check(CheckArgs),
     Cache,
+    ClearCache,
 }
 
-fn handle_node(words: &MultiTrie, node: &tree_sitter::Node, source_code: &str) {
+fn handle_node(words: &MultiTrie, node: &tree_sitter::Node, source_code: &str) -> Vec<Typo> {
     let start_byte = node.start_byte();
     let end_byte = node.end_byte();
     let text = &source_code[start_byte as usize..end_byte as usize];
+    let mut typos = Vec::new();
     if node.is_named() {
         for word in text.split_whitespace() {
             if word.len() > 1 && !words.handle_identifier(word) {
                 let line = node.start_position().row + 1;
                 let column = node.start_position().column + 1;
-                println!("TYPO at {line}:{column}: {}", word);
+                let word = word.to_string();
+                let typo = Typo { line, column, word };
+                typos.push(typo);
             }
         }
     }
     for child in node.children(&mut node.walk()) {
-        handle_node(words, &child, source_code);
+        typos.append(&mut handle_node(words, &child, source_code));
     }
+    typos
 }
 
 fn compile_wordlist(path: &str) -> anyhow::Result<()> {
@@ -75,7 +80,7 @@ fn get_or_compile_wordlist(name: &str) -> anyhow::Result<Trie> {
 
 fn get_trie(file: &PathBuf) -> MultiTrie {
     let mut trie = MultiTrie::new();
-    let tries = vec!["extra", "software_terms", "words"];
+    let tries = vec!["extra", "software_terms", "software_tools", "words"];
     match get_file_extension(file).unwrap().as_str() {
         "rs" => {
             trie.inner.push(get_or_compile_wordlist("rust").unwrap());
@@ -116,51 +121,88 @@ fn get_code(
     Ok((source_code, parser))
 }
 
-fn inner(file: &PathBuf) -> anyhow::Result<()> {
+#[derive(Debug)]
+struct Typo {
+    line: usize,
+    column: usize,
+    word: String,
+}
+
+struct CheckFileResult {
+    file: PathBuf,
+    typos: Vec<Typo>,
+}
+
+fn check_file(file: &PathBuf) -> anyhow::Result<CheckFileResult> {
     let (source_code, mut parser) = get_code(file)?;
 
     let dict = get_trie(file);
     let tree = parser.parse(&source_code, None).unwrap();
     let root_node = tree.root_node();
-    handle_node(&dict, &root_node, &source_code);
-    Ok(())
+    let typos = handle_node(&dict, &root_node, &source_code);
+    let mut result = CheckFileResult {
+        file: file.clone(),
+        typos,
+    };
+    Ok(result)
 }
 
-fn check(args: CheckArgs) -> anyhow::Result<()> {
-    let mut builder = ignore::WalkBuilder::new(&args.search_path);
-    builder.max_depth(args.max_depth);
-    builder.follow_links(args.follow_symlinks);
-    builder.max_filesize(args.max_filesize);
-    for exclude in &args.exclude {
-        builder.add_custom_ignore_filename(exclude);
-    }
-    let walker = builder.build();
+fn check(args: CheckArgs, settings: &Settings) -> anyhow::Result<()> {
     let mut files = Vec::new();
-    for entry in walker {
+    for entry in glob::glob(&args.glob)? {
         match entry {
             Ok(entry) => {
-                if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                    let path = entry.path();
-                    files.push(path.to_path_buf());
+                for exclude in &args.exclude {
+                    if glob::Pattern::new(exclude)?.matches_path(&entry) {
+                        continue;
+                    }
                 }
+                files.push(entry);
             }
             Err(err) => {
-                eprintln!("Error: {}", err);
+                eprintln!("Globbing Error: {}", err);
             }
         }
     }
 
+    if files.is_empty() {
+        bail!("No files found");
+    }
+    if files.len() > 1 {
+        println!("Found {} files", files.len());
+    } else {
+        println!("Found 1 file");
+    }
+
     for file in files {
-        inner(&file)?;
+        let result = check_file(&file)?;
+        if result.typos.is_empty() {
+            println!("{} has no typos", file.display());
+        } else {
+            let typo_word = if result.typos.len() == 1 {
+                "typo"
+            } else {
+                "typos"
+            };
+            println!("{} has {} {typo_word}", file.display(), result.typos.len());
+            for typo in result.typos {
+                println!(
+                    "Line: {}, Column: {}, Word: {}",
+                    typo.line, typo.column, typo.word
+                );
+            }
+        }
     }
     Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
+    let settings = settings::Settings::load(None);
+
     match args {
         CliArgs::Check(args) => {
-            check(args)?;
+            check(args, &settings)?;
         }
         CliArgs::Cache => {
             // list all txt files in wordlists
@@ -178,10 +220,27 @@ fn main() -> anyhow::Result<()> {
             // compile each wordlist
             for list in lists {
                 let mut trie = Trie::new();
-                trie.append_wordlist(&list).unwrap();
+                trie.append_wordlist(format!("wordlists/{}.txt", &list))?;
                 let data = trie.dump();
                 let path = format!("wordlists/{}.bin", &list);
                 fs::write(path, data)?;
+            }
+        }
+        CliArgs::ClearCache => {
+            // delete all bin files in wordlists
+            let lists = fs::read_dir("wordlists")?
+                .filter_map(|entry| {
+                    let entry = entry.ok()?;
+                    let path = entry.path();
+                    if path.extension()?.to_str()? == "bin" {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            for list in lists {
+                fs::remove_file(list)?;
             }
         }
     }

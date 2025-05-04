@@ -1,5 +1,5 @@
 use std::io::BufRead;
-use std::{collections::HashMap, path};
+use std::collections::HashMap;
 
 use bincode::{Decode, Encode};
 
@@ -27,7 +27,7 @@ impl Trie {
     {
         let mut trie = Trie::new();
         for word in iter {
-            trie.insert(&word);
+            trie.insert(&word.to_ascii_lowercase());
         }
         trie
     }
@@ -37,7 +37,7 @@ impl Trie {
         I: IntoIterator<Item = String>,
     {
         for word in iter {
-            self.insert(&word);
+            self.insert(&word.to_ascii_lowercase());
         }
     }
 
