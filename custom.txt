@@ -1,0 +1,12 @@
+blake3
+exe
+false
+filesize
+indicatif
+true
+bincode
+spellcheck
+u64
+wordlist
+wordlists
+vec
