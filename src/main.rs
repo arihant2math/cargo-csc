@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::bail;
-use clap::{Args, Parser};
+use clap::{Args, Parser, Subcommand};
 
 mod multi_trie;
 mod settings;
@@ -14,6 +14,7 @@ mod trie;
 pub use multi_trie::MultiTrie;
 use settings::Settings;
 pub use trie::Trie;
+use trie::TrieHashStore;
 
 #[derive(Clone, Debug, Args)]
 pub struct CheckArgs {
@@ -30,13 +31,21 @@ pub struct CheckArgs {
     max_filesize: Option<u64>,
 }
 
+#[derive(Clone, Debug, Subcommand)]
+pub enum CacheCommand {
+    /// Compile the wordlists
+    Build,
+    /// Clear the cache
+    Clear,
+}
+
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
 pub enum CliArgs {
     /// Check for typos
     Check(CheckArgs),
-    Cache,
-    ClearCache,
+    #[command(subcommand)]
+    Cache(CacheCommand),
 }
 
 fn handle_node(words: &MultiTrie, node: &tree_sitter::Node, source_code: &str) -> Vec<Typo> {
@@ -66,14 +75,35 @@ fn compile_wordlist(path: &str) -> anyhow::Result<()> {
     let mut trie = Trie::new();
     trie.append_wordlist(format!("wordlists/{path}.txt"))?;
     let data = trie.dump();
-    let path = format!("wordlists/{}.bin", path);
-    fs::write(path, data)?;
+    let store_path = format!("wordlists/{}.bin", path);
+    fs::write(&store_path, data)?;
+    let mut hash_store = TrieHashStore::load_from_file("wordlists/wordlist_hashes.json")
+        .unwrap_or_else(|_| TrieHashStore::new());
+    let hash = hash_file(format!("wordlists/{}.txt", path))?;
+
+    hash_store.0.insert(path.to_string(), hash);
+    hash_store.dump_to_file("wordlists/wordlist_hashes.json")?;
     Ok(())
+}
+
+fn hash_file<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<String> {
+    let text = fs::read(path)?;
+    Ok(blake3::hash(&text).to_hex().to_string())
 }
 
 fn get_or_compile_wordlist(name: &str) -> anyhow::Result<Trie> {
     let path = format!("wordlists/{}.bin", name);
+    let hash_store = TrieHashStore::load_from_file("wordlists/wordlist_hashes.json")
+        .unwrap_or_else(|_| TrieHashStore::new());
+    let hash = hash_file(format!("wordlists/{}.txt", name))?;
     if !PathBuf::from(&path).exists() {
+        compile_wordlist(name)?;
+    }
+    if let Some(stored_hash) = hash_store.0.get(name) {
+        if stored_hash != &hash {
+            compile_wordlist(name)?;
+        }
+    } else {
         compile_wordlist(name)?;
     }
     Ok(Trie::load_from_file(path)?)
@@ -186,7 +216,7 @@ fn check(args: CheckArgs, settings: &Settings) -> anyhow::Result<()> {
             for typo in result.typos {
                 println!(
                     "{}:{}:{}: Unknown word: {}",
-                    file.display(), typo.line, typo.column, typo.word
+                    result.file.display(), typo.line, typo.column, typo.word
                 );
             }
         }
@@ -202,7 +232,7 @@ fn main() -> anyhow::Result<()> {
         CliArgs::Check(args) => {
             check(args, &settings)?;
         }
-        CliArgs::Cache => {
+        CliArgs::Cache(CacheCommand::Build) => {
             // list all txt files in wordlists
             let lists = fs::read_dir("wordlists")?
                 .filter_map(|entry| {
@@ -217,14 +247,10 @@ fn main() -> anyhow::Result<()> {
                 .collect::<Vec<_>>();
             // compile each wordlist
             for list in lists {
-                let mut trie = Trie::new();
-                trie.append_wordlist(format!("wordlists/{}.txt", &list))?;
-                let data = trie.dump();
-                let path = format!("wordlists/{}.bin", &list);
-                fs::write(path, data)?;
+                compile_wordlist(&list)?;
             }
         }
-        CliArgs::ClearCache => {
+        CliArgs::Cache(CacheCommand::Clear) => {
             // delete all bin files in wordlists
             let lists = fs::read_dir("wordlists")?
                 .filter_map(|entry| {

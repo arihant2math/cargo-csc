@@ -2,6 +2,7 @@ use std::io::BufRead;
 use std::collections::HashMap;
 
 use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Encode, Decode)]
 struct TrieNode {
@@ -93,5 +94,26 @@ impl Trie {
         }
 
         current_node.is_end_of_word
+    }
+}
+
+// TODO: finish implementing this
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct TrieHashStore(pub HashMap<String, String>);
+
+impl TrieHashStore {
+    pub fn new() -> Self {
+        TrieHashStore(HashMap::new())
+    }
+
+    pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
+        let data = std::fs::read(path)?;
+        let store: TrieHashStore = serde_json::from_slice(&data).expect("Failed to deserialize TrieHashStore");
+        Ok(store)
+    }
+
+    pub fn dump_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> std::io::Result<()> {
+        let data = serde_json::to_vec(self).expect("Failed to serialize TrieHashStore");
+        std::fs::write(path, data)
     }
 }
