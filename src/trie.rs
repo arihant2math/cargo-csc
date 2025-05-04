@@ -81,9 +81,10 @@ impl Trie {
         Ok(trie)
     }
 
-    fn from_directory<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
+    pub fn from_directory<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
         // code-spellcheck.json must exist
         let path = path.as_ref().join("code-spellcheck.json");
+        todo!()
     }
 
     pub fn insert(&mut self, word: &str) {

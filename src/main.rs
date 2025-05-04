@@ -18,11 +18,12 @@ pub use trie::Trie;
 use trie::TrieHashStore;
 
 fn store_path() -> PathBuf {
-    let mut path = std::env::current_exe().unwrap();
-    path.pop();
-    path.pop();
-    path.pop();
+    let mut path = std::env::home_dir().expect("Failed to get home directory");
+    path.push(".code-spellcheck");
     path.push("wordlists");
+    if !path.exists() {
+        fs::create_dir_all(&path).expect("Failed to create wordlists directory");
+    }
     path
 }
 
