@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bincode::{Decode, Encode};
 
-use crate::dictionary::{Command, Dictionary, Rule};
+use crate::dictionary::{Command, Rule};
 
 #[derive(Clone, Debug, Encode, Decode)]
 pub struct TrieData {

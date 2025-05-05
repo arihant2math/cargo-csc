@@ -1,3 +1,5 @@
+bincode
+dashmap
 blake3
 exe
 false
@@ -7,7 +9,8 @@ true
 bincode
 spellcheck
 u64
+reqwest
+hjson
 wordlist
 wordlists
 vec
-hjson

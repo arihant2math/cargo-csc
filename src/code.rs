@@ -14,20 +14,32 @@ pub async fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Pa
         .unwrap()
         .as_str()
     {
+        "c" => {
+            parser.set_language(&tree_sitter_c::LANGUAGE.into())?;
+        }
+        "cpp" | "c++" => {
+            parser.set_language(&tree_sitter_cpp::LANGUAGE.into())?;
+        }
         "go" => {
             parser.set_language(&tree_sitter_go::LANGUAGE.into())?;
         }
-        "rs" => {
-            parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
-        }
-        "toml" => {
-            parser.set_language(&tree_sitter_toml_ng::LANGUAGE.into())?;
+        "html" => {
+            parser.set_language(&tree_sitter_html::LANGUAGE.into())?;
         }
         "js" => {
             parser.set_language(&tree_sitter_javascript::LANGUAGE.into())?;
         }
         "py" => {
             parser.set_language(&tree_sitter_python::LANGUAGE.into())?;
+        }
+        "md" => {
+            parser.set_language(&tree_sitter_md::LANGUAGE.into())?;
+        }
+        "rs" => {
+            parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
+        }
+        "toml" => {
+            parser.set_language(&tree_sitter_toml_ng::LANGUAGE.into())?;
         }
         e => {
             bail!("Unsupported file type: {}", e);

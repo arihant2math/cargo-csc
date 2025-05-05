@@ -103,6 +103,11 @@ impl MergedSettings {
         for entry in fs::read_dir(store_path()).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
+            if let Some(ext) = path.extension() {
+                if ext.to_str().unwrap() == "bin" {
+                    continue;
+                }
+            }
             match Dictionary::new_with_path(path) {
                 Ok(dictionary) => dictionaries.push(dictionary),
                 Err(e) => {
@@ -174,6 +179,9 @@ fn get_multi_trie(path: &PathBuf, context: Arc<SharedCheckContext>) -> anyhow::R
         "rs" => {
             tries.push("rust".to_string());
         }
+        "py" => {
+            tries.push("python".to_string());
+        }
         e => {
             eprintln!("Unsupported file type: {}", e);
         }
@@ -223,7 +231,6 @@ async fn handle_file(
             file.display()
         ))?;
     }
-    Ok(())
 }
 
 async fn check(args: CheckArgs) -> anyhow::Result<()> {
@@ -241,16 +248,26 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
             Ok::<(), anyhow::Error>(())
         }
     });
-    let (file_sender, file_reciever) = tokio::sync::mpsc::channel(256);
+    let (file_sender, file_receiver) = tokio::sync::mpsc::channel(256);
     let file_loader = task::spawn({
         let context = context.clone();
         async move {
             // Find files, also send them to file_sender
             // TODO: actually do it
-            file_sender.send("src/code.rs".into()).await.unwrap();
-            return vec!["src/code.rs".to_string()];
+            let walker = ignore::WalkBuilder::new(context.settings.args.dir.clone()).build();
+            let mut files = vec![];
+            for file in walker {
+                if let Ok(file) = file {
+                    if file.path().is_file() {
+                        file_sender.send(file.path().to_path_buf()).await.unwrap();
+                        files.push(file.path().to_path_buf());
+                    }
+                }
+            }
+            files
         }
     });
+
     let (res, files) = tokio::join!(dictionary_loader, file_loader);
     res??;
     let files = files?;
@@ -260,13 +277,13 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     }
     let total_files = files.len();
     if total_files == 1 {
-        eprintln!("Found 1 file");
+        println!("Found 1 file");
     } else {
-        eprintln!("Found {} files", total_files);
+        println!("Found {} files", total_files);
     }
 
-    let (result_sender, mut result_reciever) = tokio::sync::mpsc::channel(256);
-    let file_receiver = Arc::new(Mutex::new(file_reciever));
+    let (result_sender, mut result_receiver) = tokio::sync::mpsc::channel(256);
+    let file_receiver = Arc::new(Mutex::new(file_receiver));
     let num_threads = num_cpus::get();
     let threads = (0..num_threads)
         .map(|_| {
@@ -278,8 +295,27 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
         .collect::<Vec<_>>();
     let mut counter = 0;
     drop(result_sender);
-    while let Some(result) = result_reciever.recv().await {
-        // TODO: handle result
+    while let Some(result) = result_receiver.recv().await {
+        counter += 1;
+        if context.settings.verbose() {
+            if result.typos.is_empty() {
+                println!(
+                    "[{counter}/{total_files}] {file}: No typos found",
+                    file = result.file.display()
+                );
+            } else if result.typos.len() == 1 {
+                println!(
+                    "[{counter}/{total_files}] {file}: Found 1 typo",
+                    file = result.file.display()
+                );
+            } else {
+                println!(
+                    "[{counter}/{total_files}] {file}: Found {} typos",
+                    result.typos.len(),
+                    file = result.file.display()
+                );
+            }
+        }
         for typo in &result.typos {
             eprintln!(
                 "{file}:{line}:{column}: Unknown word {word}",
@@ -289,13 +325,6 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
                 word = typo.word
             );
         }
-        if context.settings.verbose() && result.typos.is_empty() {
-            println!(
-                "[{counter}/{total_files}] {file}: No typos found",
-                file = result.file.display()
-            );
-        }
-        counter += 1;
     }
     println!("Waiting for threads to finish ...");
     for thread in threads {
@@ -310,7 +339,15 @@ async fn cache(args: CacheCommand) -> anyhow::Result<()> {
             todo!();
         }
         CacheCommand::Clear => {
-            todo!();
+            let cache_dir = cache_path();
+            if cache_dir.exists() {
+                fs::remove_dir_all(&cache_dir).context(format!(
+                    "Failed to remove cache directory: {}",
+                    cache_dir.display()
+                ))?;
+            } else {
+                eprintln!("Cache directory does not exist: {}", cache_dir.display());
+            }
         }
     }
     Ok(())

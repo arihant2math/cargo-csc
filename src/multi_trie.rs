@@ -42,17 +42,10 @@ impl MultiTrie {
                 if part.chars().all(|c| c.is_numeric()) {
                     continue;
                 } else {
-                    let mut found = true;
                     for sub_part in split_by_capitalization(part) {
                         if !self.contains(&sub_part.to_ascii_lowercase()) {
-                            found = false;
-                            break;
+                            return Some(part.to_string());
                         }
-                    }
-                    if found {
-                        continue;
-                    } else {
-                        return Some(part.to_string());
                     }
                 }
             }
@@ -72,6 +65,18 @@ impl MultiTrie {
             .split(|c| splitters.contains(&c))
             .filter(|part| part.len() > 3)
             .collect::<Vec<_>>();
-        self.check_parts(&parts)
+        let res = self.check_parts(&parts);
+        if res.is_none() {
+            return None;
+        }
+        // try splitting into two parts
+        for i in 0..word.len() {
+            let p1 = &word[..i];
+            let p2 = &word[i..];
+            if self.handle_identifier(p1).is_none() && self.handle_identifier(p2).is_none() {
+                return None;
+            }
+        }
+        return res;
     }
 }

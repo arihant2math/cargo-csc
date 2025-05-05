@@ -48,7 +48,7 @@ pub enum Rule {
 }
 
 fn load_dictionary_line(line: &str) -> anyhow::Result<Rule> {
-    let trimmed = line.trim();
+    // let trimmed = line.trim();
     // TODO: Special for cspell
     let trimmed = line.split("/").next().unwrap_or(line).trim();
     if trimmed.is_empty() {
@@ -258,7 +258,7 @@ impl Dictionary {
                     )),
                 );
                 let trie = Trie::from(rules.as_ref());
-                if !trie.options.cache {
+                if trie.options.cache {
                     Self::save_to_cache(&trie, path)?;
                 }
                 Ok(trie)
@@ -290,10 +290,12 @@ impl Dictionary {
                 }
                 if content.no_cache {
                     rules.push(Rule::Command(Command::Cache(false)));
+                } else {
+                    rules.push(Rule::Command(Command::Cache(true)));
                 }
                 rules.push(Rule::Command(Command::Name(content.name.clone())));
                 let trie = Trie::from(rules.as_ref());
-                if !content.no_cache {
+                if trie.options.cache {
                     Self::save_to_cache(&trie, path)?;
                 }
                 Ok(trie)
