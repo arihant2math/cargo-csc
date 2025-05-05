@@ -1,43 +1,42 @@
-use std::{
-    collections::HashMap,
-    fs::{self, File},
-    io::{self, Read},
-    path::{Path, PathBuf},
-};
+use std::io::Write;
+use std::thread;
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
-use rayon::prelude::*;
+use dashmap::DashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::task;
+use url::Url;
 
+mod code;
 mod dictionary;
 mod filesystem;
 mod multi_trie;
 mod settings;
 mod trie;
 
+pub use code::{Typo, get_code, handle_node};
+pub use dictionary::{Dictionary, Rule};
+pub use filesystem::{cache_path, get_file_extension, store_path};
 pub use multi_trie::MultiTrie;
-use settings::Settings;
+pub use settings::Settings;
 pub use trie::Trie;
-use trie::TrieHashStore;
-
-fn store_path() -> PathBuf {
-    let mut path = std::env::home_dir().expect("Failed to get home directory");
-    path.push(".code-spellcheck");
-    path.push("wordlists");
-    if !path.exists() {
-        fs::create_dir_all(&path).expect("Failed to create wordlists directory");
-    }
-    path
-}
 
 #[derive(Clone, Debug, Args)]
 pub struct CheckArgs {
     /// The path to the folder to search
     dir: PathBuf,
     glob: Option<String>,
+    /// Verbose output
+    #[clap(short, long, default_value_t = false)]
+    verbose: bool,
     /// Which files/folders to exclude from the search
-    #[clap(short, long)]
+    #[clap(long)]
     exclude: Vec<String>,
+    #[clap(long)]
+    extra_dictionaries: Vec<String>,
     #[clap(long)]
     max_depth: Option<usize>,
     #[clap(long, default_value_t = false)]
@@ -46,6 +45,11 @@ pub struct CheckArgs {
     max_filesize: Option<u64>,
     #[clap(long)]
     settings: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct InstallArgs {
+    uri: String,
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -63,76 +67,90 @@ pub enum CliArgs {
     Check(CheckArgs),
     #[command(subcommand)]
     Cache(CacheCommand),
+    Install(InstallArgs),
 }
 
-pub fn get_file_extension(file: &PathBuf) -> Option<String> {
-    file.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_string())
+pub struct CheckContext {
+    pub dictionaries: HashMap<String, Trie>,
+    pub settings: Settings,
 }
 
-fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Parser)> {
-    let file = File::open(path)?;
-    let mut reader = io::BufReader::new(file);
-    let mut source_code = String::new();
-    reader.read_to_string(&mut source_code)?;
-    let mut parser = tree_sitter::Parser::new();
-    match get_file_extension(path).unwrap().as_str() {
-        "go" => {
-            parser.set_language(&tree_sitter_go::LANGUAGE.into())?;
-        }
-        "rs" => {
-            parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
-        }
-        "toml" => {
-            parser.set_language(&tree_sitter_toml_ng::LANGUAGE.into())?;
-        }
-        "js" => {
-            parser.set_language(&tree_sitter_javascript::LANGUAGE.into())?;
-        }
-        "py" => {
-            parser.set_language(&tree_sitter_python::LANGUAGE.into())?;
-        }
-        e => {
-            bail!("Unsupported file type: {}", e);
-        }
+struct MergedSettings {
+    args: CheckArgs,
+    settings: Settings,
+}
+
+impl MergedSettings {
+    fn new(args: CheckArgs, settings: Settings) -> Self {
+        Self { args, settings }
     }
-    Ok((source_code, parser))
-}
 
-
-fn handle_node(words: &MultiTrie, node: &tree_sitter::Node, source_code: &str) -> Vec<Typo> {
-    let start_byte = node.start_byte();
-    let end_byte = node.end_byte();
-    let text = &source_code[start_byte as usize..end_byte as usize];
-    let mut typos = Vec::new();
-    if node.is_named() {
-        for word in text.split_whitespace() {
-            if word.len() > 1 {
-                if let Some(typo) = words.handle_identifier(word) {
-                    let line = node.start_position().row + 1;
-                    let column = node.start_position().column + 1;
-                    let typo = Typo {
-                        line,
-                        column,
-                        word: typo,
-                    };
-                    typos.push(typo);
+    fn dictionaries(&self) -> Vec<Dictionary> {
+        let mut dictionaries = Vec::with_capacity(
+            self.args.extra_dictionaries.len() + self.settings.dictionary_definitions.len(),
+        );
+        for extra in &self.args.extra_dictionaries {
+            if let Ok(dictionary) = Dictionary::new_with_path(PathBuf::from(extra)) {
+                dictionaries.push(dictionary);
+            }
+        }
+        for def in self.settings.dictionary_definitions.iter() {
+            if let Ok(dictionary) = Dictionary::new_with_path(PathBuf::from(&def.path)) {
+                dictionaries.push(dictionary);
+            }
+        }
+        // check store_path for dictionaries
+        for entry in fs::read_dir(store_path()).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            match Dictionary::new_with_path(path) {
+                Ok(dictionary) => dictionaries.push(dictionary),
+                Err(e) => {
+                    eprintln!("Failed to load dictionary from store: {}", e);
                 }
             }
         }
+        dictionaries
     }
-    for child in node.children(&mut node.walk()) {
-        typos.append(&mut handle_node(words, &child, source_code));
+
+    fn base_dictionaries(&self) -> Vec<String> {
+        let mut dictionaries = self.settings.dictionaries.clone();
+        dictionaries.extend(self.args.extra_dictionaries.clone());
+        dictionaries
     }
-    typos
+
+    fn verbose(&self) -> bool {
+        self.args.verbose
+    }
 }
 
-#[derive(Debug)]
-struct Typo {
-    line: usize,
-    column: usize,
-    word: String,
+struct SharedCheckContext {
+    // None means the dictionary is not loaded
+    dictionaries: DashMap<String, Trie>,
+    settings: MergedSettings,
+}
+
+impl SharedCheckContext {
+    fn new(settings: MergedSettings) -> Self {
+        let dictionaries = DashMap::new();
+        Self {
+            dictionaries,
+            settings,
+        }
+    }
+
+    fn custom_trie(&self) -> anyhow::Result<Trie> {
+        let v = Dictionary::new_from_strings(self.settings.settings.words.clone());
+        Ok(v.compile()?)
+    }
+
+    fn get_base_dictionaries(&self) -> Vec<String> {
+        self.settings.base_dictionaries()
+    }
+
+    fn get_dictionaries(&self) -> Vec<Dictionary> {
+        self.settings.dictionaries()
+    }
 }
 
 struct CheckFileResult {
@@ -140,115 +158,203 @@ struct CheckFileResult {
     typos: Vec<Typo>,
 }
 
-fn check_file(file: &PathBuf, settings: &Settings) -> anyhow::Result<CheckFileResult> {
-    let (source_code, mut parser) =
-        get_code(file).context(format!("Failed to get code for file: {}", file.display()))?;
-
-    let dict = filesystem::get_trie(file, settings).context(format!(
-        "Failed to load dictionary set for file: {}",
-        file.display()
-    ))?;
-    let tree = parser.parse(&source_code, None).unwrap();
-    let root_node = tree.root_node();
-    let typos = handle_node(&dict, &root_node, &source_code);
-    let result = CheckFileResult {
-        file: file.clone(),
-        typos,
-    };
-    Ok(result)
+fn get_multi_trie(path: &PathBuf, context: Arc<SharedCheckContext>) -> anyhow::Result<MultiTrie> {
+    if path.is_dir() {
+        bail!("Path is a directory: {}", path.display());
+    }
+    let mut trie = MultiTrie::new();
+    let mut tries = context.get_base_dictionaries().clone();
+    match get_file_extension(path).unwrap().as_str() {
+        "c" => {
+            tries.push("c".to_string());
+        }
+        "cpp" => {
+            tries.push("cpp".to_string());
+        }
+        "rs" => {
+            tries.push("rust".to_string());
+        }
+        e => {
+            eprintln!("Unsupported file type: {}", e);
+        }
+    }
+    for name in tries {
+        let trie_instance = context
+            .dictionaries
+            .get(&name)
+            .ok_or_else(|| anyhow::anyhow!("Dictionary not found: {}", name))?
+            .clone();
+        trie.inner.push(trie_instance);
+    }
+    trie.inner.push(context.custom_trie()?);
+    Ok(trie)
 }
 
-fn check(args: CheckArgs) -> anyhow::Result<()> {
-    let settings = settings::Settings::load(args.settings.map(|p| p.display().to_string()));
-
-    // TODO: path my not be "."
-    let mut walker = ignore::WalkBuilder::new(&args.dir);
-    for exclude in &args.exclude {
-        walker.add_custom_ignore_filename(exclude);
-    }
-
-    let pattern = glob::Pattern::new(&args.glob.unwrap_or("**/*.*".to_string()))?;
-    let files = walker.build().collect::<Result<Vec<_>, _>>()?;
-    let files: Vec<_> = files
-        .into_iter()
-        .map(|d| d.into_path())
-        .filter(|f| f.is_file())
-        .filter(|f| pattern.matches_path(f))
-        .collect();
-
-    if files.is_empty() {
-        bail!("No files found");
-    }
-    if files.len() > 1 {
-        println!("Found {} files", files.len());
-    } else {
-        println!("Found 1 file");
-    }
-
-    files
-        .par_iter()
-        .try_for_each(|file| -> anyhow::Result<()> {
-            let result = check_file(file, &settings)
-                .context(format!("Failed to check file: {}", file.display()))?;
-            if !result.typos.is_empty() {
-                for typo in result.typos.iter() {
-                    println!(
-                        "{}:{}:{}: Unknown word: {}",
-                        result.file.display(),
-                        typo.line,
-                        typo.column,
-                        typo.word
-                    );
-                }
+#[tokio::main]
+async fn handle_file(
+    context: Arc<SharedCheckContext>,
+    file_receiver: Arc<Mutex<tokio::sync::mpsc::Receiver<PathBuf>>>,
+    result_sender: tokio::sync::mpsc::Sender<CheckFileResult>,
+) -> anyhow::Result<()> {
+    loop {
+        let file = match file_receiver.lock().await.recv().await {
+            Some(f) => f,
+            None => {
+                return Ok(());
             }
-            Ok(())
-        })?;
+        };
+        let (source_code, mut parser) = get_code(&file)
+            .await
+            .context(format!("Failed to get code for file: {}", file.display()))?;
+
+        let dict = get_multi_trie(&file, context.clone()).context(format!(
+            "Failed to load dictionary set for file: {}",
+            file.display()
+        ))?;
+        let tree = parser.parse(&source_code, None).unwrap();
+        let root_node = tree.root_node();
+        let typos = handle_node(&dict, &root_node, &source_code);
+        let result = CheckFileResult {
+            file: file.clone(),
+            typos,
+        };
+        result_sender.send(result).await.context(format!(
+            "Failed to send result for file: {}",
+            file.display()
+        ))?;
+    }
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
+async fn check(args: CheckArgs) -> anyhow::Result<()> {
+    let settings = settings::Settings::load(args.settings.clone().map(|p| p.display().to_string()));
+    // Generate context
+    let context = Arc::new(SharedCheckContext::new(MergedSettings::new(args, settings)));
+    let dictionary_loader = task::spawn_blocking({
+        let context = context.clone();
+        move || {
+            let c = context.get_dictionaries();
+            for dict in c {
+                let trie = dict.compile()?;
+                context.dictionaries.insert(trie.options.name.clone(), trie);
+            }
+            Ok::<(), anyhow::Error>(())
+        }
+    });
+    let (file_sender, file_reciever) = tokio::sync::mpsc::channel(256);
+    let file_loader = task::spawn({
+        let context = context.clone();
+        async move {
+            // Find files, also send them to file_sender
+            // TODO: actually do it
+            file_sender.send("src/code.rs".into()).await.unwrap();
+            return vec!["src/code.rs".to_string()];
+        }
+    });
+    let (res, files) = tokio::join!(dictionary_loader, file_loader);
+    res??;
+    let files = files?;
+    if files.is_empty() {
+        eprintln!("No files found");
+        return Ok(());
+    }
+    let total_files = files.len();
+    if total_files == 1 {
+        eprintln!("Found 1 file");
+    } else {
+        eprintln!("Found {} files", total_files);
+    }
+
+    let (result_sender, mut result_reciever) = tokio::sync::mpsc::channel(256);
+    let file_receiver = Arc::new(Mutex::new(file_reciever));
+    let num_threads = num_cpus::get();
+    let threads = (0..num_threads)
+        .map(|_| {
+            let context = context.clone();
+            let file_receiver = file_receiver.clone();
+            let result_sender = result_sender.clone();
+            thread::spawn(move || handle_file(context, file_receiver, result_sender))
+        })
+        .collect::<Vec<_>>();
+    let mut counter = 0;
+    drop(result_sender);
+    while let Some(result) = result_reciever.recv().await {
+        // TODO: handle result
+        for typo in &result.typos {
+            eprintln!(
+                "{file}:{line}:{column}: Unknown word {word}",
+                file = result.file.display(),
+                line = typo.line,
+                column = typo.column,
+                word = typo.word
+            );
+        }
+        if context.settings.verbose() && result.typos.is_empty() {
+            println!(
+                "[{counter}/{total_files}] {file}: No typos found",
+                file = result.file.display()
+            );
+        }
+        counter += 1;
+    }
+    println!("Waiting for threads to finish ...");
+    for thread in threads {
+        thread.join().unwrap()?;
+    }
+    Ok(())
+}
+
+async fn cache(args: CacheCommand) -> anyhow::Result<()> {
+    match args {
+        CacheCommand::Build => {
+            todo!();
+        }
+        CacheCommand::Clear => {
+            todo!();
+        }
+    }
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
 
     match args {
         CliArgs::Check(args) => {
-            check(args)?;
+            check(args).await?;
         }
-        CliArgs::Cache(CacheCommand::Build) => {
-            // list all txt files in wordlists
-            let lists = fs::read_dir(store_path())?
-                .filter_map(|entry| {
-                    let entry = entry.ok()?;
-                    let path = entry.path();
-                    if path.extension()?.to_str()? == "txt" {
-                        Some(path.file_stem()?.to_str()?.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            // compile each wordlist
-            for list in lists {
-                let text_path = store_path().join(format!("{}.txt", list));
-                let bin_path = store_path().join(format!("{}.bin", list));
-                filesystem::compile_wordlist(text_path, bin_path)
-                    .context(format!("Failed to compile wordlist: {}", list))?;
+        CliArgs::Cache(args) => {
+            cache(args).await?;
+        }
+        CliArgs::Install(args) => {
+            // Try path
+            enum InstallType {
+                Path(PathBuf),
+                Url(Url),
             }
-        }
-        CliArgs::Cache(CacheCommand::Clear) => {
-            // delete all bin files in wordlists
-            let lists = fs::read_dir(store_path())?
-                .filter_map(|entry| {
-                    let entry = entry.ok()?;
-                    let path = entry.path();
-                    if path.extension()?.to_str()? == "bin" {
-                        Some(path)
+            let path = PathBuf::from(&args.uri);
+            let install_type = if path.exists() {
+                InstallType::Path(path)
+            } else {
+                InstallType::Url(Url::parse(&args.uri)?)
+            };
+            match install_type {
+                InstallType::Path(ref path) => {
+                    fs::copy(path, store_path().join(path.file_name().unwrap()))?;
+                }
+                InstallType::Url(ref url) => {
+                    let response = reqwest::get(url.clone()).await?;
+                    if response.status().is_success() {
+                        let mut file = fs::File::create(
+                            store_path().join(url.path_segments().unwrap().last().unwrap()),
+                        )?;
+                        let mut content = response.bytes().await?.to_vec();
+                        file.write_all(&mut content)?;
                     } else {
-                        None
+                        bail!("Failed to download file from URL: {}", url);
                     }
-                })
-                .collect::<Vec<_>>();
-            for list in lists {
-                fs::remove_file(list)?;
+                }
             }
         }
     }

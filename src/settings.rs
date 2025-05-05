@@ -1,13 +1,21 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DictionaryDefinition {
+pub struct CustomDictionaryDefinition {
     pub name: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
     pub path: String,
-    #[serde(default)]
-    pub globs: Vec<String>,
-    #[serde(default)]
-    pub compile: bool,
+}
+
+impl Default for CustomDictionaryDefinition {
+    fn default() -> Self {
+        CustomDictionaryDefinition {
+            name: "custom".to_string(),
+            path: ".".to_string(),
+            aliases: vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,7 +23,7 @@ pub struct Settings {
     #[serde(default)]
     pub dictionaries: Vec<String>,
     #[serde(default, alias = "dictionaryDefinitions")]
-    pub dictionary_definitions: Vec<DictionaryDefinition>,
+    pub dictionary_definitions: Vec<CustomDictionaryDefinition>,
     #[serde(default, alias = "ignorePaths")]
     pub ignore_paths: Vec<String>,
     #[serde(default)]

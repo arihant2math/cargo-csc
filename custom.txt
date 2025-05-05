@@ -10,3 +10,4 @@ u64
 wordlist
 wordlists
 vec
+hjson
