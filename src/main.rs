@@ -1,7 +1,8 @@
 use std::io::Write;
 use std::thread;
 use std::{collections::HashMap, fs, path::PathBuf};
-
+use std::cell::RefCell;
+use std::path::Path;
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
 use dashmap::DashMap;
@@ -23,6 +24,7 @@ pub use filesystem::{cache_path, get_file_extension, store_path};
 pub use multi_trie::MultiTrie;
 pub use settings::Settings;
 pub use trie::Trie;
+use crate::filesystem::tmp_path;
 
 #[derive(Clone, Debug, Args)]
 pub struct CheckArgs {
@@ -72,6 +74,8 @@ pub enum CliArgs {
     #[command(subcommand)]
     Cache(CacheCommand),
     Install(InstallArgs),
+    /// Import cspell dictionaries
+    ImportCspell
 }
 
 pub struct CheckContext {
@@ -377,6 +381,95 @@ async fn cache(args: CacheCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
+
+struct State {
+    progress: Option<git2::Progress<'static>>,
+    total: usize,
+    current: usize,
+    path: Option<PathBuf>,
+    newline: bool,
+}
+
+fn print(state: &mut State) {
+    let stats = state.progress.as_ref().unwrap();
+    let network_pct = (100 * stats.received_objects()) / stats.total_objects();
+    let index_pct = (100 * stats.indexed_objects()) / stats.total_objects();
+    let co_pct = if state.total > 0 {
+        (100 * state.current) / state.total
+    } else {
+        0
+    };
+    let kbytes = stats.received_bytes() / 1024;
+    if stats.received_objects() == stats.total_objects() {
+        if !state.newline {
+            println!();
+            state.newline = true;
+        }
+        print!(
+            "Resolving deltas {}/{}\r",
+            stats.indexed_deltas(),
+            stats.total_deltas()
+        );
+    } else {
+        print!(
+            "net {:3}% ({:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})  \
+             /  chk {:3}% ({:4}/{:4}) {}\r",
+            network_pct,
+            kbytes,
+            stats.received_objects(),
+            stats.total_objects(),
+            index_pct,
+            stats.indexed_objects(),
+            stats.total_objects(),
+            co_pct,
+            state.current,
+            state.total,
+            state
+                .path
+                .as_ref()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        )
+    }
+    std::io::stdout().flush().unwrap();
+}
+
+fn clone<P: AsRef<Path>>(url: &str, path: P) -> Result<git2::Repository, git2::Error> {
+    let state = RefCell::new(State {
+        progress: None,
+        total: 0,
+        current: 0,
+        path: None,
+        newline: false,
+    });
+    let mut cb = git2::RemoteCallbacks::new();
+    cb.transfer_progress(|stats| {
+        let mut state = state.borrow_mut();
+        state.progress = Some(stats.to_owned());
+        print(&mut *state);
+        true
+    });
+
+    let mut co = git2::build::CheckoutBuilder::new();
+    co.progress(|path, cur, total| {
+        let mut state = state.borrow_mut();
+        state.path = path.map(|p| p.to_path_buf());
+        state.current = cur;
+        state.total = total;
+        print(&mut *state);
+    });
+
+    let mut fo = git2::FetchOptions::new();
+    fo.remote_callbacks(cb);
+    let repo = git2::build::RepoBuilder::new()
+        .fetch_options(fo)
+        .with_checkout(co)
+        .clone(url, path.as_ref())?;
+    println!();
+
+    Ok(repo)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
@@ -415,6 +508,80 @@ async fn main() -> anyhow::Result<()> {
                     } else {
                         bail!("Failed to download file from URL: {}", url);
                     }
+                }
+            }
+        }
+        CliArgs::ImportCspell => {
+            let repo_path = tmp_path().join("cspell-dicts");
+            if !repo_path.exists() {
+                fs::create_dir_all(&repo_path).context(format!(
+                    "Failed to create temporary directory: {}",
+                    repo_path.display()
+                ))?;
+
+                let url = "https://github.com/streetsidesoftware/cspell-dicts";
+                println!("Cloning {url}");
+                let repo = match clone(url, &repo_path) {
+                    Ok(repo) => repo,
+                    Err(e) => bail!("failed to clone: {}", e),
+                };
+                let commit_hash = "87d8d65fdc410c1e1bf0f1278c030adfa0dfb4cb";
+                // Checkout the commit
+                // Parse the commit hash into an Oid and find the commit object
+                let oid = git2::Oid::from_str(commit_hash)?;
+                let commit = repo.find_commit(oid)?;
+
+                // Convert the commit to an object for checkout first ... then checkout tree
+                repo.checkout_tree(commit.as_object(), None)?;
+
+                // Set HEAD to this commit (detached HEAD state)
+                repo.set_head_detached(oid)?;
+                println!("Checked out to {commit_hash}");
+            }
+            println!("Installing cspell dictionaries");
+            for dict_dir in fs::read_dir(repo_path.join("dictionaries"))? {
+                let dict_dir = dict_dir?;
+                let root_dict_path = dict_dir.path();
+                if root_dict_path.join("dict").exists() {
+                    let dict_path = root_dict_path.join("dict");
+                    // glob all txt files
+                    let pattern = glob::Pattern::new("*.txt")?;
+                    let mut files: Vec<String> = vec![];
+                    for entry in fs::read_dir(&dict_path)? {
+                        let entry = entry?;
+                        let path = entry.path();
+                        if pattern.matches_path(path.file_name().unwrap().as_ref()) {
+                            files.push(path.to_string_lossy().to_string());
+                        }
+                    }
+                    let new_store = store_path().join(format!("cspell_{}", dict_dir.file_name().to_string_lossy()));
+                    if new_store.exists() {
+                        fs::remove_dir_all(&new_store).context(format!(
+                            "Failed to remove directory: {}",
+                            new_store.display()
+                        ))?;
+                    }
+                    fs::create_dir_all(&new_store).context(format!(
+                        "Failed to create directory: {}",
+                        new_store.display()
+                    ))?;
+                    let mut config = dictionary::DictionaryConfig {
+                        name: dict_dir.file_name().to_string_lossy().to_string(),
+                        description: Some("Imported from cspell".to_string()),
+                        paths: vec![],
+                        case_sensitive: false,
+                        no_cache: false,
+                    };
+                    for file in files {
+                        let file_path = dict_path.join(&file);
+                        let new_file = new_store.join(&file);
+                        fs::copy(file_path, &new_file).context(format!(
+                            "Failed to copy file: {}",
+                            new_file.display()
+                        ))?;
+                        config.paths.push(file);
+                    }
+                    println!("Installed dictionary: {}", config.name);
                 }
             }
         }

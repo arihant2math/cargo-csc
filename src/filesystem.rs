@@ -10,9 +10,18 @@ pub fn get_file_extension(file: &PathBuf) -> Option<String> {
         .map(|ext| ext.to_string())
 }
 
-pub fn store_path() -> PathBuf {
+pub fn csc_path() -> PathBuf {
+    #[allow(deprecated)]
     let mut path = std::env::home_dir().expect("Failed to get home directory");
     path.push(".code-spellcheck");
+    if !path.exists() {
+        fs::create_dir_all(&path).expect("Failed to create .code-spellcheck directory");
+    }
+    path
+}
+
+pub fn store_path() -> PathBuf {
+    let mut path = csc_path();
     path.push("wordlists");
     if !path.exists() {
         fs::create_dir_all(&path).expect("Failed to create wordlists directory");
@@ -21,9 +30,17 @@ pub fn store_path() -> PathBuf {
 }
 
 pub fn cache_path() -> PathBuf {
-    let mut path = std::env::home_dir().expect("Failed to get home directory");
-    path.push(".code-spellcheck");
+    let mut path = csc_path();
     path.push("caches");
+    if !path.exists() {
+        fs::create_dir_all(&path).expect("Failed to create wordlists directory");
+    }
+    path
+}
+
+pub fn tmp_path() -> PathBuf {
+    let mut path = csc_path();
+    path.push("tmp");
     if !path.exists() {
         fs::create_dir_all(&path).expect("Failed to create wordlists directory");
     }
