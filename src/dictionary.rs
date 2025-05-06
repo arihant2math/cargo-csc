@@ -274,15 +274,16 @@ impl Dictionary {
                 let content: DictionaryConfig =
                     serde_hjson::from_reader(std::fs::File::open(config_path)?)?;
                 let mut rules = Vec::new();
-                for path in content.paths {
-                    let path = path.trim().to_string();
-                    let file_path = PathBuf::from(&path);
+                for path_str in content.paths {
+                    let path_str = path_str.trim().to_string();
+                    let file_path = relative_path::RelativePath::new(&path_str);
+                    let file_path = file_path.to_path(&path);
                     if file_path.exists() {
                         let content = std::fs::read_to_string(&file_path)?;
                         let rules_part = load_dictionary_format(&content)?;
                         rules.extend(rules_part);
                     } else {
-                        return Err(anyhow::anyhow!("Dictionary file does not exist: {}", path));
+                        return Err(anyhow::anyhow!("Dictionary file does not exist: {}", path_str));
                     }
                 }
                 if content.case_sensitive {

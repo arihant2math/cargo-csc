@@ -32,6 +32,8 @@ pub struct CheckArgs {
     /// Verbose output
     #[clap(short, long, default_value_t = false)]
     verbose: bool,
+    #[clap(short, long, default_value_t = false)]
+    progress: bool,
     /// Which files/folders to exclude from the search
     #[clap(long)]
     exclude: Vec<String>,
@@ -43,6 +45,8 @@ pub struct CheckArgs {
     follow_symlinks: bool,
     #[clap(long)]
     max_filesize: Option<u64>,
+    #[clap(short, long)]
+    jobs: Option<usize>,
     #[clap(long)]
     settings: Option<PathBuf>,
 }
@@ -127,6 +131,10 @@ impl MergedSettings {
     fn verbose(&self) -> bool {
         self.args.verbose
     }
+
+    fn jobs(&self) -> usize {
+        self.args.jobs.unwrap_or_else(|| num_cpus::get())
+    }
 }
 
 struct SharedCheckContext {
@@ -204,11 +212,14 @@ async fn handle_file(
     file_receiver: Arc<Mutex<tokio::sync::mpsc::Receiver<PathBuf>>>,
     result_sender: tokio::sync::mpsc::Sender<CheckFileResult>,
 ) -> anyhow::Result<()> {
+    if context.settings.verbose() {
+        println!("Starting thread #{:?}" , thread::current().id());
+    }
     loop {
         let file = match file_receiver.lock().await.recv().await {
             Some(f) => f,
             None => {
-                return Ok(());
+                break;
             }
         };
         let (source_code, mut parser) = get_code(&file)
@@ -220,7 +231,7 @@ async fn handle_file(
             file.display()
         ))?;
         let tree = parser.parse(&source_code, None).unwrap();
-        let root_node = tree.root_node();
+        let root_node = Box::new(tree.root_node());
         let typos = handle_node(&dict, &root_node, &source_code);
         let result = CheckFileResult {
             file: file.clone(),
@@ -231,6 +242,10 @@ async fn handle_file(
             file.display()
         ))?;
     }
+    if context.settings.verbose() {
+        println!("Finalizing thread #{:?}", thread::current().id());
+    }
+    Ok(())
 }
 
 async fn check(args: CheckArgs) -> anyhow::Result<()> {
@@ -254,11 +269,12 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
         async move {
             // Find files, also send them to file_sender
             // TODO: actually do it
+            let pattern = glob::Pattern::new(context.settings.args.glob.as_ref().unwrap_or(&"**/*.*".to_string())).unwrap();
             let walker = ignore::WalkBuilder::new(context.settings.args.dir.clone()).build();
             let mut files = vec![];
             for file in walker {
                 if let Ok(file) = file {
-                    if file.path().is_file() {
+                    if file.path().is_file() && pattern.matches_path(file.path()) {
                         file_sender.send(file.path().to_path_buf()).await.unwrap();
                         files.push(file.path().to_path_buf());
                     }
@@ -284,7 +300,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
 
     let (result_sender, mut result_receiver) = tokio::sync::mpsc::channel(256);
     let file_receiver = Arc::new(Mutex::new(file_receiver));
-    let num_threads = num_cpus::get();
+    let num_threads = context.settings.jobs();
     let threads = (0..num_threads)
         .map(|_| {
             let context = context.clone();
@@ -297,7 +313,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     drop(result_sender);
     while let Some(result) = result_receiver.recv().await {
         counter += 1;
-        if context.settings.verbose() {
+        if context.settings.verbose() || context.settings.args.progress {
             if result.typos.is_empty() {
                 println!(
                     "[{counter}/{total_files}] {file}: No typos found",

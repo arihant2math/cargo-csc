@@ -55,7 +55,7 @@ pub fn handle_node(
 ) -> Vec<Typo> {
     let start_byte = node.start_byte();
     let end_byte = node.end_byte();
-    let text = &source_code[start_byte as usize..end_byte as usize];
+    let text = &source_code[start_byte..end_byte];
     let mut typos = Vec::new();
     if node.is_named() {
         for word in text.split_whitespace() {

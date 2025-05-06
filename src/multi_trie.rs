@@ -69,14 +69,6 @@ impl MultiTrie {
         if res.is_none() {
             return None;
         }
-        // try splitting into two parts
-        for i in 0..word.len() {
-            let p1 = &word[..i];
-            let p2 = &word[i..];
-            if self.handle_identifier(p1).is_none() && self.handle_identifier(p2).is_none() {
-                return None;
-            }
-        }
-        return res;
+        res
     }
 }

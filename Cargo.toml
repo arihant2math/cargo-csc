@@ -16,6 +16,7 @@ indicatif = { version = "0.17", features = ["rayon"] }
 num_cpus = "1.16.0"
 rand = "0.9.1"
 rayon = "1.10"
+relative-path = "1.9.3"
 reqwest = "0.12.15"
 serde = { version = "1.0", features = ["derive"] }
 serde-hjson = "*"
