@@ -36,7 +36,7 @@ impl Trie {
     }
 
     pub fn dump(&self) -> anyhow::Result<Vec<u8>> {
-        Ok(bincode::encode_to_vec(&self, bincode::config::standard())?)
+        Ok(bincode::encode_to_vec(self, bincode::config::standard())?)
     }
 
     pub fn load(data: &[u8]) -> anyhow::Result<Self> {
@@ -51,7 +51,7 @@ impl Trie {
 
     pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
         let data = std::fs::read(path)?;
-        Ok(Trie::load(&data)?)
+        Trie::load(&data)
     }
 
     /// Inserts a word into the trie.
@@ -78,9 +78,9 @@ impl Trie {
 
         if let Some(ref data) = current_node.data {
             // TODO: handle disallow properly
-            return !data.disallow;
+            !data.disallow
         } else {
-            return false;
+            false
         }
     }
 }
@@ -113,7 +113,7 @@ impl TrieOptions {
 impl From<&[Rule]> for Trie {
     fn from(rules: &[Rule]) -> Self {
         let mut trie = Trie::new();
-        for rule in rules.into_iter() {
+        for rule in rules {
             match rule {
                 Rule::Allow(word) => {
                     trie.insert(&word, TrieData::default());

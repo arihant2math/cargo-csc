@@ -66,9 +66,6 @@ impl MultiTrie {
             .filter(|part| part.len() > 3)
             .collect::<Vec<_>>();
         let res = self.check_parts(&parts);
-        if res.is_none() {
-            return None;
-        }
         res
     }
 }

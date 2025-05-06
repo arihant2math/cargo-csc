@@ -79,7 +79,7 @@ pub fn handle_node(
     typos
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Typo {
     pub line: usize,
     pub column: usize,

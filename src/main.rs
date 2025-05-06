@@ -213,7 +213,7 @@ async fn handle_file(
     result_sender: tokio::sync::mpsc::Sender<CheckFileResult>,
 ) -> anyhow::Result<()> {
     if context.settings.verbose() {
-        println!("Starting thread #{:?}" , thread::current().id());
+        println!("Starting thread #{:?}", thread::current().id());
     }
     loop {
         let file = match file_receiver.lock().await.recv().await {
@@ -269,7 +269,15 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
         async move {
             // Find files, also send them to file_sender
             // TODO: actually do it
-            let pattern = glob::Pattern::new(context.settings.args.glob.as_ref().unwrap_or(&"**/*.*".to_string())).unwrap();
+            let pattern = glob::Pattern::new(
+                context
+                    .settings
+                    .args
+                    .glob
+                    .as_ref()
+                    .unwrap_or(&"**/*.*".to_string()),
+            )
+            .unwrap();
             let walker = ignore::WalkBuilder::new(context.settings.args.dir.clone()).build();
             let mut files = vec![];
             for file in walker {
@@ -400,7 +408,7 @@ async fn main() -> anyhow::Result<()> {
                     let response = reqwest::get(url.clone()).await?;
                     if response.status().is_success() {
                         let mut file = fs::File::create(
-                            store_path().join(url.path_segments().unwrap().last().unwrap()),
+                            store_path().join(url.path_segments().unwrap().next_back().unwrap()),
                         )?;
                         let mut content = response.bytes().await?.to_vec();
                         file.write_all(&mut content)?;

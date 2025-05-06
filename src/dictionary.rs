@@ -72,10 +72,18 @@ fn load_dictionary_line(line: &str) -> anyhow::Result<Rule> {
         }
         // TODO: Handle case sensitivity
     } else if trimmed.starts_with("!") {
-        let disallow = trimmed.trim_start_matches('!').trim().to_ascii_lowercase().to_string();
+        let disallow = trimmed
+            .trim_start_matches('!')
+            .trim()
+            .to_ascii_lowercase()
+            .to_string();
         Rule::Disallow(disallow)
     } else if trimmed.starts_with("+") {
-        let allow = trimmed.trim_start_matches('+').trim().to_ascii_lowercase().to_string();
+        let allow = trimmed
+            .trim_start_matches('+')
+            .trim()
+            .to_ascii_lowercase()
+            .to_string();
         Rule::Allow(allow)
     } else {
         Rule::Allow(trimmed.to_ascii_lowercase().to_string())
@@ -83,9 +91,9 @@ fn load_dictionary_line(line: &str) -> anyhow::Result<Rule> {
 }
 
 fn load_dictionary_format(s: &str) -> anyhow::Result<Vec<Rule>> {
-    Ok(s.lines()
+    s.lines()
         .map(load_dictionary_line)
-        .collect::<Result<Vec<_>, _>>()?)
+        .collect::<Result<Vec<_>, _>>()
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -283,7 +291,10 @@ impl Dictionary {
                         let rules_part = load_dictionary_format(&content)?;
                         rules.extend(rules_part);
                     } else {
-                        return Err(anyhow::anyhow!("Dictionary file does not exist: {}", path_str));
+                        return Err(anyhow::anyhow!(
+                            "Dictionary file does not exist: {}",
+                            path_str
+                        ));
                     }
                 }
                 if content.case_sensitive {
