@@ -2,11 +2,11 @@ use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
 use dashmap::DashMap;
 use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
 use std::thread;
-use std::{collections::HashMap, fs, path::PathBuf};
-use std::path::Path;
 use std::time::Duration;
+use std::{collections::HashMap, fs, path::PathBuf};
 use tokio::sync::Mutex;
 use tokio::task;
 use tokio::time::Instant;
@@ -261,9 +261,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
                 let trie = Arc::new(dict.compile()?);
                 for name in names {
                     // TODO: handle overwrites
-                    context
-                        .dictionaries
-                        .insert(name.clone(), trie.clone());
+                    context.dictionaries.insert(name.clone(), trie.clone());
                 }
             }
             Ok::<(), anyhow::Error>(())

@@ -1,7 +1,7 @@
+use flate2::bufread::GzDecoder;
 use std::io::Read;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
-use flate2::bufread::GzDecoder;
 
 #[derive(Debug)]
 struct Version(pub String);
@@ -55,7 +55,6 @@ fn parse_header(input: &[String]) -> anyhow::Result<(usize, Header)> {
     ))
 }
 
-
 struct TrieNode {
     eow: bool,
     children: std::collections::HashMap<char, Arc<Mutex<TrieNode>>>,
@@ -73,10 +72,8 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
     enum State {
         Escape,
         Remove,
-        InId {
-            chars: Vec<char>,
-        },
-        InWord
+        InId { chars: Vec<char> },
+        InWord,
     }
     let mut state = State::InWord;
     let mut pos = Mutex::new(vec![unlock[0].clone()]);
@@ -106,7 +103,9 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
                     let last = pos_lock.last().unwrap().clone();
                     let mut last_lock = last.lock().unwrap();
                     drop(pos_lock);
-                    last_lock.children.insert(char, unlock.last().unwrap().clone());
+                    last_lock
+                        .children
+                        .insert(char, unlock.last().unwrap().clone());
                     let mut pos_lock = pos.lock().unwrap();
                     pos_lock.push(unlock.last().unwrap().clone());
                 }
@@ -137,9 +136,7 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
                 } else {
                     assert_eq!(char, ';');
                     // convert chars to number with header specified base
-                    let number = chars
-                        .iter()
-                        .collect::<String>();
+                    let number = chars.iter().collect::<String>();
                     // convert to number in header.base
                     let number = u32::from_str_radix(&number, header.base as u32)
                         .expect("Failed to convert number");
@@ -178,7 +175,9 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
                     let last = pos_lock.last().unwrap().clone();
                     drop(pos_lock);
                     let mut last_lock = last.lock().unwrap();
-                    last_lock.children.insert(char, unlock.last().unwrap().clone());
+                    last_lock
+                        .children
+                        .insert(char, unlock.last().unwrap().clone());
                     let mut pos_lock = pos.lock().unwrap();
                     pos_lock.push(unlock.last().unwrap().clone());
                 }
@@ -194,7 +193,10 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
         }
     }
 
-    fn convert(node: Arc<Mutex<TrieNode>>, stack: &Vec<Arc<Mutex<TrieNode>>>) -> crate::trie::TrieNode {
+    fn convert(
+        node: Arc<Mutex<TrieNode>>,
+        stack: &Vec<Arc<Mutex<TrieNode>>>,
+    ) -> crate::trie::TrieNode {
         let node = node.lock().unwrap();
         let mut conv_node = node_from_bool(node.eow);
         for (c, ptr) in &node.children {
@@ -224,9 +226,7 @@ pub fn parse_trie(input: &[String]) -> anyhow::Result<(Header, crate::Trie)> {
     Ok((header, trie))
 }
 
-pub fn file_to_lines<P: AsRef<std::path::Path>>(
-    path: P,
-) -> std::io::Result<Vec<String>> {
+pub fn file_to_lines<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Vec<String>> {
     // Read the entire file into a byte buffer
     let buf = std::fs::read(&path)?;
     let filename = path.as_ref().to_string_lossy();
@@ -243,9 +243,7 @@ pub fn file_to_lines<P: AsRef<std::path::Path>>(
     };
 
     // Split on newlines (`lines()` handles `\n` and `\r\n`)
-    Ok(text.lines()
-        .map(|s| s.to_string())
-        .collect())
+    Ok(text.lines().map(|s| s.to_string()).collect())
 }
 
 #[cfg(test)]
@@ -271,11 +269,7 @@ mod tests {
             version: Version("TrieXv4".to_string()),
             base: 10,
         };
-        let input = vec![
-            "a$".to_string(),
-            "b$".to_string(),
-            "c$".to_string(),
-        ];
+        let input = vec!["a$".to_string(), "b$".to_string(), "c$".to_string()];
         let trie = parse_body(&input, &header);
         assert!(trie.contains("a"));
         assert!(!trie.contains("b"));
@@ -287,7 +281,8 @@ mod tests {
 
     #[test]
     fn test_parse_en_us() {
-        let path = r"C:\Users\ariha\.code-spellcheck\tmp\cspell-dicts\dictionaries\en_US\en_US.trie";
+        let path =
+            r"C:\Users\ariha\.code-spellcheck\tmp\cspell-dicts\dictionaries\en_US\en_US.trie";
         let lines = file_to_lines(path).unwrap();
         let (header, trie) = parse_trie(&lines).unwrap();
         assert_eq!(header.version.to_u8(), 3);

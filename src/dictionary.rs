@@ -9,7 +9,7 @@ use crate::{Trie, filesystem, store_path};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {
     CaseSensitive,
-    Cache(bool)
+    Cache(bool),
 }
 
 impl Command {
@@ -239,15 +239,10 @@ impl Dictionary {
 
     pub fn get_names(&self) -> anyhow::Result<Vec<String>> {
         match self {
-            Dictionary::File(path) => {
-                Ok(vec![path.file_stem().unwrap().to_string_lossy().to_string()])
-            },
-            Dictionary::Custom {
-                definition,
-                ..
-            } => {
-                Ok(vec![definition.name.clone()])
-            }
+            Dictionary::File(path) => Ok(vec![
+                path.file_stem().unwrap().to_string_lossy().to_string(),
+            ]),
+            Dictionary::Custom { definition, .. } => Ok(vec![definition.name.clone()]),
             Dictionary::Directory(path) => {
                 let config_path = path.join("csc-config.json");
                 if !config_path.exists() {
