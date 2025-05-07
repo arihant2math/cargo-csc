@@ -73,7 +73,7 @@ fn clone<P: AsRef<Path>>(url: &str, path: P) -> Result<git2::Repository, git2::E
     cb.transfer_progress(|stats| {
         let mut state = state.borrow_mut();
         state.progress = Some(stats.to_owned());
-        print(&mut *state);
+        print(&mut state);
         true
     });
 
@@ -83,7 +83,7 @@ fn clone<P: AsRef<Path>>(url: &str, path: P) -> Result<git2::Repository, git2::E
         state.path = path.map(|p| p.to_path_buf());
         state.current = cur;
         state.total = total;
-        print(&mut *state);
+        print(&mut state);
     });
 
     let mut fo = git2::FetchOptions::new();
@@ -107,7 +107,7 @@ pub fn import() -> anyhow::Result<()> {
 
         let url = "https://github.com/streetsidesoftware/cspell-dicts";
         println!("Cloning {url}");
-        let repo = clone(url, &repo_path).with_context(|| format!("failed to clone: {}", url))?;
+        let _repo = clone(url, &repo_path).with_context(|| format!("failed to clone: {}", url))?;
     }
     // TODO: checkout right commit (last tag)
 

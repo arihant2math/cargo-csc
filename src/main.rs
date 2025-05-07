@@ -5,6 +5,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::thread;
 use std::{collections::HashMap, fs, path::PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task;
@@ -143,7 +144,7 @@ impl MergedSettings {
     }
 
     fn jobs(&self) -> usize {
-        self.args.jobs.unwrap_or_else(|| num_cpus::get())
+        self.args.jobs.unwrap_or_else(num_cpus::get)
     }
 }
 
@@ -164,7 +165,7 @@ impl SharedCheckContext {
 
     fn custom_trie(&self) -> anyhow::Result<Trie> {
         let v = Dictionary::new_from_strings(self.settings.settings.words.clone());
-        Ok(v.compile()?)
+        v.compile()
     }
 
     fn get_base_dictionaries(&self) -> Vec<String> {
@@ -181,12 +182,12 @@ struct CheckFileResult {
     typos: Vec<Typo>,
 }
 
-fn get_multi_trie(path: &PathBuf, context: Arc<SharedCheckContext>) -> anyhow::Result<MultiTrie> {
+fn get_multi_trie(path: &Path, context: Arc<SharedCheckContext>) -> anyhow::Result<MultiTrie> {
     if path.is_dir() {
         bail!("Path is a directory: {}", path.display());
     }
     let mut trie = MultiTrie::new();
-    let mut tries = context.get_base_dictionaries().clone();
+    let tries = context.get_base_dictionaries().clone();
 
     for name in tries {
         let trie_instance = context
@@ -362,11 +363,9 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     let mut printed = false;
     loop {
         let now = Instant::now();
-        if now - start > Duration::from_secs(1) {
-            if !printed {
-                println!("Waiting for threads to finish...");
-                printed = true;
-            }
+        if !printed && now - start > Duration::from_secs(1) {
+            println!("Waiting for threads to finish...");
+            printed = true;
         }
         if now - start > Duration::from_secs(5) {
             println!("Threads are taking too long to finish, exiting...");
@@ -435,8 +434,8 @@ async fn main() -> anyhow::Result<()> {
                         let mut file = fs::File::create(
                             store_path().join(url.path_segments().unwrap().next_back().unwrap()),
                         )?;
-                        let mut content = response.bytes().await?.to_vec();
-                        file.write_all(&mut content)?;
+                        let content = response.bytes().await?.to_vec();
+                        file.write_all(&content)?;
                     } else {
                         bail!("Failed to download file from URL: {}", url);
                     }

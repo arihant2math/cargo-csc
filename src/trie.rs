@@ -159,10 +159,10 @@ impl From<&[Rule]> for Trie {
         for rule in rules {
             match rule {
                 Rule::Allow(word) => {
-                    trie.insert(&word, TrieData::default());
+                    trie.insert(word, TrieData::default());
                 }
                 Rule::Disallow(word) => {
-                    trie.insert(&word, TrieData { disallow: true });
+                    trie.insert(word, TrieData { disallow: true });
                 }
                 Rule::Command(command) => {
                     trie.options.add_command(command);

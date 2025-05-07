@@ -1,7 +1,6 @@
-use std::cell::UnsafeCell;
 use std::io::Read;
-use std::ops::{Index, IndexMut};
-use anyhow::bail;
+use std::ops::Deref;
+use std::sync::{Arc, Mutex};
 use flate2::bufread::GzDecoder;
 
 #[derive(Debug)]
@@ -12,14 +11,14 @@ impl Version {
     pub fn to_u8(&self) -> u8 {
         self.0
             .split('v')
-            .last()
+            .next_back()
             .and_then(|s| s.parse::<u8>().ok())
             .unwrap()
     }
 }
 
 #[derive(Debug)]
-struct Header {
+pub struct Header {
     version: Version,
     base: u8,
 }
@@ -59,63 +58,18 @@ fn parse_header(input: &[String]) -> anyhow::Result<(usize, Header)> {
 
 struct TrieNode {
     eow: bool,
-    children: std::collections::HashMap<char, *mut TrieNode>,
-}
-
-struct Stack {
-    inner: UnsafeCell<Vec<TrieNode>>
-}
-
-impl Stack {
-    fn new() -> Self {
-        Stack {
-            inner: UnsafeCell::new(Vec::new()),
-        }
-    }
-
-    fn get(&self) -> &mut Vec<TrieNode> {
-        unsafe { &mut *self.inner.get() }
-    }
-
-    unsafe fn get_index_hack_mut(&self, index: usize) -> &mut TrieNode {
-        &mut self.get()[index]
-    }
-
-    fn push(&self, node: TrieNode) {
-        self.get().push(node);
-    }
-
-    fn pop(&mut self) -> TrieNode {
-        self.get().pop().unwrap()
-    }
-
-    fn len(&self) -> usize {
-        self.get().len()
-    }
-}
-
-impl Index<usize> for Stack {
-    type Output = TrieNode;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.get()[index]
-    }
-}
-
-impl IndexMut<usize> for Stack {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.get()[index]
-    }
+    children: std::collections::HashMap<char, Arc<Mutex<TrieNode>>>,
 }
 
 fn parse_body(input: &[String], header: &Header) -> crate::Trie {
-    let mut stack = Stack::new();
+    let stack = Mutex::new(Vec::new());
 
     let root = TrieNode {
         eow: false,
         children: std::collections::HashMap::new(),
     };
-    stack.push(root);
+    let mut unlock = stack.lock().unwrap();
+    unlock.push(Arc::new(Mutex::new(root)));
     enum State {
         Escape,
         Remove,
@@ -125,31 +79,36 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
         InWord
     }
     let mut state = State::InWord;
-    let mut pos: Vec<*mut TrieNode> = vec![&mut stack[0]];
+    let mut pos = Mutex::new(vec![unlock[0].clone()]);
+    drop(unlock);
     for line in input {
         for char in line.chars() {
+            let mut unlock = stack.lock().unwrap();
             if char == '\n' {
                 continue;
             }
             if matches!(state, State::Escape) {
                 state = State::InWord;
-                let last: &mut TrieNode = unsafe { &mut **pos.last().unwrap() };
-                if last.children.contains_key(&char) {
-                    unsafe {
-                        pos.push(last.children[&char]);
-                    }
+                let pos_lock = pos.lock().unwrap();
+                let last = pos_lock.last().unwrap().clone();
+                drop(pos_lock);
+                let last_lock = last.lock().unwrap();
+                if last_lock.children.contains_key(&char) {
+                    let mut pos_lock = pos.lock().unwrap();
+                    pos_lock.push(last_lock.children[&char].clone());
                 } else {
                     let new_node = TrieNode {
                         eow: false,
                         children: std::collections::HashMap::new(),
                     };
-                    drop(last);
-                    stack.push(new_node);
-                    let last: &mut TrieNode = unsafe { &mut **pos.last().unwrap() };
-                    unsafe {
-                        last.children.insert(char, stack.get_index_hack_mut(stack.len() - 1));
-                        pos.push(stack.get_index_hack_mut(stack.len() - 1));
-                    }
+                    unlock.push(Arc::new(Mutex::new(new_node)));
+                    let pos_lock = pos.lock().unwrap();
+                    let last = pos_lock.last().unwrap().clone();
+                    let mut last_lock = last.lock().unwrap();
+                    drop(pos_lock);
+                    last_lock.children.insert(char, unlock.last().unwrap().clone());
+                    let mut pos_lock = pos.lock().unwrap();
+                    pos_lock.push(unlock.last().unwrap().clone());
                 }
                 continue;
             }
@@ -163,9 +122,11 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
             };
             if to_remove > 0 {
                 state = State::InWord;
+                let mut pos_lock = pos.lock().unwrap();
                 for _ in 0..to_remove {
-                    pos.pop();
+                    pos_lock.pop();
                 }
+                drop(pos_lock);
                 continue;
             }
 
@@ -183,7 +144,7 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
                     let number = u32::from_str_radix(&number, header.base as u32)
                         .expect("Failed to convert number");
                     // TODO: This might not be kosher
-                    pos = vec![unsafe { stack.get_index_hack_mut(number as usize) }];
+                    pos = Mutex::new(vec![unlock[number as usize].clone()]);
                     state = State::InWord;
                     continue;
                 }
@@ -193,28 +154,33 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
                 state = State::Escape;
                 continue;
             } else if char == '$' {
-                let ptr: &mut TrieNode = unsafe { &mut **pos.last().unwrap() };
-                ptr.eow = true;
+                let pos_lock = pos.lock().unwrap();
+                let last = pos_lock.last().unwrap();
+                let mut last_lock = last.lock().unwrap();
+                last_lock.eow = true;
             } else if char == '<' {
                 state = State::Remove;
             } else {
-                let last: &mut TrieNode = unsafe { &mut **pos.last().unwrap() };
-                if last.children.contains_key(&char) {
-                    unsafe {
-                        pos.push(last.children[&char]);
-                    }
+                let pos_lock = pos.lock().unwrap();
+                let last = pos_lock.last().unwrap().clone();
+                drop(pos_lock);
+                let last_lock = last.lock().unwrap();
+                if last_lock.children.contains_key(&char) {
+                    let mut pos_lock = pos.lock().unwrap();
+                    pos_lock.push(last_lock.children[&char].clone());
                 } else {
                     let new_node = TrieNode {
                         eow: false,
                         children: std::collections::HashMap::new(),
                     };
-                    drop(last);
-                    stack.push(new_node);
-                    let last: &mut TrieNode = unsafe { &mut **pos.last().unwrap() };
-                    unsafe {
-                        last.children.insert(char, stack.get_index_hack_mut(stack.len() - 1));
-                        pos.push(stack.get_index_hack_mut(stack.len() - 1));
-                    }
+                    unlock.push(Arc::new(Mutex::new(new_node)));
+                    let pos_lock = pos.lock().unwrap();
+                    let last = pos_lock.last().unwrap().clone();
+                    drop(pos_lock);
+                    let mut last_lock = last.lock().unwrap();
+                    last_lock.children.insert(char, unlock.last().unwrap().clone());
+                    let mut pos_lock = pos.lock().unwrap();
+                    pos_lock.push(unlock.last().unwrap().clone());
                 }
             }
         }
@@ -228,19 +194,21 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
         }
     }
 
-    fn convert(node: *const TrieNode, stack: &Stack) -> crate::trie::TrieNode {
-        let node = unsafe { &*node };
+    fn convert(node: Arc<Mutex<TrieNode>>, stack: &Vec<Arc<Mutex<TrieNode>>>) -> crate::trie::TrieNode {
+        let node = node.lock().unwrap();
         let mut conv_node = node_from_bool(node.eow);
         for (c, ptr) in &node.children {
-            let out = convert(*ptr, stack);
+            let out = convert(ptr.clone(), stack);
             conv_node.children.insert(*c, out);
         }
         conv_node
     }
 
-    let mut conv_root = node_from_bool(stack[0].eow);
-    for (c, ptr) in &stack[0].children {
-        let out = convert(*ptr, &stack);
+    let l_stack = stack.lock().unwrap();
+    let root = l_stack.first().unwrap().lock().unwrap();
+    let mut conv_root = node_from_bool(root.eow);
+    for (c, ptr) in &root.children {
+        let out = convert(ptr.clone(), l_stack.deref());
         conv_root.children.insert(*c, out);
     }
     crate::Trie {
@@ -252,7 +220,6 @@ fn parse_body(input: &[String], header: &Header) -> crate::Trie {
 pub fn parse_trie(input: &[String]) -> anyhow::Result<(Header, crate::Trie)> {
     let (counter, header) = parse_header(input)?;
     let body = &input[counter..];
-    dbg!();
     let trie = parse_body(body, &header);
     Ok((header, trie))
 }
@@ -319,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_en_US() {
+    fn test_parse_en_us() {
         let path = r"C:\Users\ariha\.code-spellcheck\tmp\cspell-dicts\dictionaries\en_US\en_US.trie";
         let lines = file_to_lines(path).unwrap();
         let (header, trie) = parse_trie(&lines).unwrap();

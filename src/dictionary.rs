@@ -200,7 +200,7 @@ impl Dictionary {
         let path_hash = blake3::hash(path.to_str().unwrap().as_bytes())
             .to_hex()
             .to_string();
-        let fs_hash = filesystem::get_path_hash(&path)?;
+        let fs_hash = filesystem::get_path_hash(path)?;
         let cache_hash_store = DictCacheStore::load_from_file(dict_cache_store_location()?)?;
         if let Some(hash) = cache_hash_store.0.get(&path_hash) {
             if hash == &fs_hash {
@@ -329,7 +329,7 @@ impl Dictionary {
                 for path_str in content.paths {
                     let path_str = path_str.trim().to_string();
                     let file_path = relative_path::RelativePath::new(&path_str);
-                    let file_path = file_path.to_path(&path);
+                    let file_path = file_path.to_path(path);
                     if file_path.exists() {
                         let content = std::fs::read_to_string(&file_path)?;
                         let rules_part = load_dictionary_format(&content)?;

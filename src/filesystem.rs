@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-pub fn get_file_extension(file: &PathBuf) -> Option<String> {
+pub fn get_file_extension(file: &Path) -> Option<String> {
     file.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_string())
