@@ -1,9 +1,12 @@
 bincode
 dashmap
-blake3
+bufread
+blake
+flate
 exe
 false
 filesize
+gzdecoder
 indicatif
 true
 bincode
@@ -11,6 +14,4 @@ spellcheck
 u64
 reqwest
 hjson
-wordlist
-wordlists
 vec

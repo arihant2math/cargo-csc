@@ -9,8 +9,7 @@ use crate::{Trie, filesystem, store_path};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {
     CaseSensitive,
-    Cache(bool),
-    Name(String),
+    Cache(bool)
 }
 
 impl Command {
@@ -26,9 +25,6 @@ impl Command {
             } else {
                 None
             }
-        } else if s.starts_with("name:") {
-            let value = s.trim_start_matches("name:");
-            Some(Command::Name(value.to_string()))
         } else {
             None
         }
@@ -145,6 +141,11 @@ pub enum Dictionary {
     File(PathBuf),
     /// A dictionary that is loaded from a directory
     Directory(PathBuf),
+    /// Custom
+    Custom {
+        definition: crate::settings::CustomDictionaryDefinition,
+        root: PathBuf,
+    },
     /// A dictionary that is loaded from a vector of rules
     Rules(Vec<Rule>),
 }
@@ -175,6 +176,13 @@ impl Dictionary {
         }
     }
 
+    pub fn new_custom(
+        definition: crate::settings::CustomDictionaryDefinition,
+        root: PathBuf,
+    ) -> Self {
+        Dictionary::Custom { definition, root }
+    }
+
     pub fn new_with_rules(rules: Vec<Rule>) -> Self {
         Dictionary::Rules(rules)
     }
@@ -196,7 +204,7 @@ impl Dictionary {
         let cache_hash_store = DictCacheStore::load_from_file(dict_cache_store_location()?)?;
         if let Some(hash) = cache_hash_store.0.get(&path_hash) {
             if hash == &fs_hash {
-                let cache_path = filesystem::cache_path().join(format!("{}.trie", path_hash));
+                let cache_path = filesystem::cache_path().join(format!("{}.bin", path_hash));
                 if cache_path.exists() {
                     let trie = Trie::load_from_file(cache_path)?;
                     return Ok(Some(trie));
@@ -216,7 +224,7 @@ impl Dictionary {
             .to_hex()
             .to_string();
         let fs_hash = filesystem::get_path_hash(path)?;
-        let cache_path = filesystem::cache_path().join(format!("{}.trie", path_hash));
+        let cache_path = filesystem::cache_path().join(format!("{}.bin", path_hash));
         trie.dump_to_file(&cache_path)?;
         let mut cache_hash_store = DictCacheStore::load_from_file(dict_cache_store_location()?)?;
         cache_hash_store.0.insert(path_hash, fs_hash);
@@ -227,6 +235,33 @@ impl Dictionary {
     pub fn save_to_cache(trie: &Trie, path: &PathBuf) -> anyhow::Result<()> {
         Self::save_to_cache_inner(trie, path)
             .context(format!("Failed to save cache for {}", path.display()))
+    }
+
+    pub fn get_names(&self) -> anyhow::Result<Vec<String>> {
+        match self {
+            Dictionary::File(path) => {
+                Ok(vec![path.file_stem().unwrap().to_string_lossy().to_string()])
+            },
+            Dictionary::Custom {
+                definition,
+                ..
+            } => {
+                Ok(vec![definition.name.clone()])
+            }
+            Dictionary::Directory(path) => {
+                let config_path = path.join("csc-config.json");
+                if !config_path.exists() {
+                    return Err(anyhow::anyhow!(
+                        "Dictionary config file does not exist: {}",
+                        config_path.display()
+                    ));
+                }
+                let content: DictionaryConfig =
+                    serde_hjson::from_reader(std::fs::File::open(config_path)?)?;
+                Ok(vec![content.name])
+            }
+            Dictionary::Rules(_) => Ok(vec![]),
+        }
     }
 
     fn compile_inner(&self) -> anyhow::Result<Trie> {
@@ -253,23 +288,32 @@ impl Dictionary {
                 }
             }
             Dictionary::Rules(_) => {}
+            // TODO: Fix
+            Dictionary::Custom { .. } => {}
         }
         match self {
             Dictionary::File(path) => {
                 let content = std::fs::read_to_string(path)?;
-                let mut rules = load_dictionary_format(&content)?;
-                // push default name to beginning of rules
-                rules.insert(
-                    0,
-                    Rule::Command(Command::Name(
-                        path.file_stem().unwrap().to_string_lossy().to_string(),
-                    )),
-                );
+                let rules = load_dictionary_format(&content)?;
                 let trie = Trie::from(rules.as_ref());
                 if trie.options.cache {
                     Self::save_to_cache(&trie, path)?;
                 }
                 Ok(trie)
+            }
+            Dictionary::Custom { definition, root } => {
+                let mut rules = vec![];
+                let path = root.join(&definition.path);
+                if !path.exists() {
+                    return Err(anyhow::anyhow!(
+                        "Custom dictionary file does not exist: {}",
+                        path.display()
+                    ));
+                }
+                let content = std::fs::read_to_string(&path)?;
+                let rules_part = load_dictionary_format(&content)?;
+                rules.extend(rules_part);
+                Ok(Trie::from(rules.as_ref()))
             }
             Dictionary::Directory(path) => {
                 let config_path = path.join("csc-config.json");
@@ -305,7 +349,6 @@ impl Dictionary {
                 } else {
                     rules.push(Rule::Command(Command::Cache(true)));
                 }
-                rules.push(Rule::Command(Command::Name(content.name.clone())));
                 let trie = Trie::from(rules.as_ref());
                 if trie.options.cache {
                     Self::save_to_cache(&trie, path)?;
@@ -313,9 +356,7 @@ impl Dictionary {
                 Ok(trie)
             }
             Dictionary::Rules(rules) => {
-                // generate random name
-                let name = rand::random::<u64>().to_string();
-                let mut new_rules = vec![Rule::Command(Command::Name(format!("custom-{}", name)))];
+                let mut new_rules = vec![];
                 for rule in rules {
                     new_rules.push(rule.clone());
                 }

@@ -1,8 +1,9 @@
+use std::sync::Arc;
 use crate::Trie;
 
 #[derive(Debug, Default)]
 pub struct MultiTrie {
-    pub inner: Vec<Trie>,
+    pub inner: Vec<Arc<Trie>>,
 }
 
 impl MultiTrie {
@@ -59,6 +60,7 @@ impl MultiTrie {
             '&', '/', '|', '<', '>', '=', '+', '-', '*', '%', '^', '~', '`', '@', '#', '$', '!',
             '?', ':', ';', '(', ')', '{', '}', '[', ']', ',', '.', '/', '1', '2', '3', '4', '5',
             '6', '7', '8', '9', '0',
+            '\\'
         ];
         // TODO: handle \ properly
         let parts = word

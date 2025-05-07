@@ -1,24 +1,24 @@
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
 use dashmap::DashMap;
-use std::cell::RefCell;
 use std::io::Write;
-use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 use std::{collections::HashMap, fs, path::PathBuf};
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task;
+use tokio::time::Instant;
 use url::Url;
 
 mod code;
+mod cspell;
 mod dictionary;
 mod filesystem;
 mod multi_trie;
 mod settings;
 mod trie;
 
-use crate::filesystem::tmp_path;
 pub use code::{Typo, get_code, handle_node};
 pub use dictionary::{Dictionary, Rule};
 pub use filesystem::{cache_path, get_file_extension, store_path};
@@ -93,6 +93,14 @@ impl MergedSettings {
         Self { args, settings }
     }
 
+    fn root_path(&self) -> PathBuf {
+        if self.args.dir.is_absolute() {
+            self.args.dir.clone()
+        } else {
+            std::env::current_dir().unwrap()
+        }
+    }
+
     fn dictionaries(&self) -> Vec<Dictionary> {
         let mut dictionaries = Vec::with_capacity(
             self.args.extra_dictionaries.len() + self.settings.dictionary_definitions.len(),
@@ -103,9 +111,7 @@ impl MergedSettings {
             }
         }
         for def in self.settings.dictionary_definitions.iter() {
-            if let Ok(dictionary) = Dictionary::new_with_path(PathBuf::from(&def.path)) {
-                dictionaries.push(dictionary);
-            }
+            dictionaries.push(Dictionary::new_custom(def.clone(), self.root_path()));
         }
         // check store_path for dictionaries
         for entry in fs::read_dir(store_path()).unwrap() {
@@ -143,7 +149,7 @@ impl MergedSettings {
 
 struct SharedCheckContext {
     // None means the dictionary is not loaded
-    dictionaries: DashMap<String, Trie>,
+    dictionaries: DashMap<String, Arc<Trie>>,
     settings: MergedSettings,
 }
 
@@ -181,23 +187,7 @@ fn get_multi_trie(path: &PathBuf, context: Arc<SharedCheckContext>) -> anyhow::R
     }
     let mut trie = MultiTrie::new();
     let mut tries = context.get_base_dictionaries().clone();
-    match get_file_extension(path).unwrap().as_str() {
-        "c" => {
-            tries.push("c".to_string());
-        }
-        "cpp" => {
-            tries.push("cpp".to_string());
-        }
-        "rs" => {
-            tries.push("rust".to_string());
-        }
-        "py" => {
-            tries.push("python".to_string());
-        }
-        e => {
-            eprintln!("Unsupported file type: {}", e);
-        }
-    }
+
     for name in tries {
         let trie_instance = context
             .dictionaries
@@ -206,7 +196,7 @@ fn get_multi_trie(path: &PathBuf, context: Arc<SharedCheckContext>) -> anyhow::R
             .clone();
         trie.inner.push(trie_instance);
     }
-    trie.inner.push(context.custom_trie()?);
+    trie.inner.push(Arc::new(context.custom_trie()?));
     Ok(trie)
 }
 
@@ -260,16 +250,20 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
         let context = context.clone();
         move || {
             let c = context.get_dictionaries();
+            let base_dictionaries = context.get_base_dictionaries();
             for dict in c {
-                let trie = dict.compile()?;
-                if context.dictionaries.contains_key(&trie.options.name) {
-                    eprintln!(
-                        "Dictionary {} already loaded, skipping",
-                        trie.options.name
-                    );
+                let names = dict.get_names()?;
+                if !base_dictionaries.iter().any(|x| names.contains(x)) {
+                    // Don't load pointless tries
                     continue;
                 }
-                context.dictionaries.insert(trie.options.name.clone(), trie);
+                let trie = Arc::new(dict.compile()?);
+                for name in names {
+                    // TODO: handle overwrites
+                    context
+                        .dictionaries
+                        .insert(name.clone(), trie.clone());
+                }
             }
             Ok::<(), anyhow::Error>(())
         }
@@ -279,7 +273,6 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
         let context = context.clone();
         async move {
             // Find files, also send them to file_sender
-            // TODO: actually do it
             let pattern = glob::Pattern::new(
                 context
                     .settings
@@ -361,7 +354,28 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
             );
         }
     }
-    println!("Waiting for threads to finish ...");
+
+    if context.settings.verbose() {
+        println!("All files processed");
+    }
+    let start = Instant::now();
+    let mut printed = false;
+    loop {
+        let now = Instant::now();
+        if now - start > Duration::from_secs(1) {
+            if !printed {
+                println!("Waiting for threads to finish...");
+                printed = true;
+            }
+        }
+        if now - start > Duration::from_secs(5) {
+            println!("Threads are taking too long to finish, exiting...");
+            std::process::exit(1);
+        }
+        if threads.iter().all(|t| t.is_finished()) {
+            break;
+        }
+    }
     for thread in threads {
         thread.join().unwrap()?;
     }
@@ -386,94 +400,6 @@ async fn cache(args: CacheCommand) -> anyhow::Result<()> {
         }
     }
     Ok(())
-}
-
-struct State {
-    progress: Option<git2::Progress<'static>>,
-    total: usize,
-    current: usize,
-    path: Option<PathBuf>,
-    newline: bool,
-}
-
-fn print(state: &mut State) {
-    let stats = state.progress.as_ref().unwrap();
-    let network_pct = (100 * stats.received_objects()) / stats.total_objects();
-    let index_pct = (100 * stats.indexed_objects()) / stats.total_objects();
-    let co_pct = if state.total > 0 {
-        (100 * state.current) / state.total
-    } else {
-        0
-    };
-    let kilobytes = stats.received_bytes() / 1024;
-    if stats.received_objects() == stats.total_objects() {
-        if !state.newline {
-            println!();
-            state.newline = true;
-        }
-        print!(
-            "Resolving deltas {}/{}\r",
-            stats.indexed_deltas(),
-            stats.total_deltas()
-        );
-    } else {
-        print!(
-            "net {:3}% ({:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})  \
-             /  chk {:3}% ({:4}/{:4}) {}\r",
-            network_pct,
-            kilobytes,
-            stats.received_objects(),
-            stats.total_objects(),
-            index_pct,
-            stats.indexed_objects(),
-            stats.total_objects(),
-            co_pct,
-            state.current,
-            state.total,
-            state
-                .path
-                .as_ref()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        )
-    }
-    std::io::stdout().flush().unwrap();
-}
-
-fn clone<P: AsRef<Path>>(url: &str, path: P) -> Result<git2::Repository, git2::Error> {
-    let state = RefCell::new(State {
-        progress: None,
-        total: 0,
-        current: 0,
-        path: None,
-        newline: false,
-    });
-    let mut cb = git2::RemoteCallbacks::new();
-    cb.transfer_progress(|stats| {
-        let mut state = state.borrow_mut();
-        state.progress = Some(stats.to_owned());
-        print(&mut *state);
-        true
-    });
-
-    let mut co = git2::build::CheckoutBuilder::new();
-    co.progress(|path, cur, total| {
-        let mut state = state.borrow_mut();
-        state.path = path.map(|p| p.to_path_buf());
-        state.current = cur;
-        state.total = total;
-        print(&mut *state);
-    });
-
-    let mut fo = git2::FetchOptions::new();
-    fo.remote_callbacks(cb);
-    let repo = git2::build::RepoBuilder::new()
-        .fetch_options(fo)
-        .with_checkout(co)
-        .clone(url, path.as_ref())?;
-    println!();
-
-    Ok(repo)
 }
 
 #[tokio::main]
@@ -518,83 +444,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         CliArgs::ImportCspell => {
-            let repo_path = tmp_path().join("cspell-dicts");
-            if !repo_path.exists() {
-                fs::create_dir_all(&repo_path).context(format!(
-                    "Failed to create temporary directory: {}",
-                    repo_path.display()
-                ))?;
-
-                let url = "https://github.com/streetsidesoftware/cspell-dicts";
-                println!("Cloning {url}");
-                let repo =
-                    clone(url, &repo_path).with_context(|| format!("failed to clone: {}", url))?;
-            }
-            // TODO: checkout right commit (last tag)
-
-            println!("Installing cspell dictionaries");
-            let dicts_root = repo_path.join("dictionaries");
-
-            for entry in fs::read_dir(&dicts_root)? {
-                let entry = entry?;
-                let dict_dir = entry.path();
-                let dict_subdir = dict_dir.join("dict");
-                if !dict_subdir.exists() {
-                    continue;
-                }
-
-                // collect just the file-names (e.g. "ada.txt"), not full paths
-                let mut files = Vec::new();
-                for file_entry in fs::read_dir(&dict_subdir)? {
-                    let file_entry = file_entry?;
-                    let p = file_entry.path();
-                    if let Some(fname) = p.file_name().and_then(|s| s.to_str()) {
-                        if glob::Pattern::new("*.txt")?.matches(fname) {
-                            files.push(fname.to_string());
-                        }
-                    }
-                }
-
-                let store = store_path().join(format!(
-                    "cspell_{}",
-                    dict_dir.file_name().unwrap().to_string_lossy()
-                ));
-                if store.exists() {
-                    fs::remove_dir_all(&store)
-                        .context(format!("Failed to remove directory: {}", store.display()))?;
-                }
-                fs::create_dir_all(&store)
-                    .context(format!("Failed to create directory: {}", store.display()))?;
-
-                let mut config = dictionary::DictionaryConfig {
-                    name: dict_dir.file_name().unwrap().to_string_lossy().into(),
-                    description: Some("Imported from cspell".to_string()),
-                    paths: Vec::with_capacity(files.len()),
-                    case_sensitive: false,
-                    no_cache: false,
-                };
-
-                for file_name in files {
-                    let src = dict_subdir.join(&file_name);
-                    let dst = store.join(&file_name);
-                    fs::copy(&src, &dst).context(format!(
-                        "Failed to copy file from {} to {}",
-                        src.display(),
-                        dst.display(),
-                    ))?;
-                    config.paths.push(file_name);
-                }
-                // Write the config file
-                let config_path = store.join("csc-config.json");
-                let config_content = serde_json::to_string_pretty(&config)
-                    .context("Failed to serialize config")?;
-                let mut config_file = fs::File::create(&config_path)
-                    .context(format!("Failed to create config file: {}", config_path.display()))?;
-                config_file.write(config_content.as_bytes())
-                    .context(format!("Failed to write config file: {}", config_path.display()))?;
-
-                println!("Installed dictionary: {}", config.name);
-            }
+            cspell::import()?;
         }
     }
     Ok(())

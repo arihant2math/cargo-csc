@@ -16,14 +16,30 @@ impl Default for TrieData {
 }
 
 #[derive(Clone, Default, Debug, Encode, Decode)]
-struct TrieNode {
-    data: Option<TrieData>,
-    children: HashMap<char, TrieNode>,
+pub struct TrieNode {
+    pub data: Option<TrieData>,
+    pub children: HashMap<char, TrieNode>,
+}
+
+impl TrieNode {
+    pub fn none() -> Self {
+        TrieNode {
+            data: None,
+            children: HashMap::new(),
+        }
+    }
+
+    pub fn some_default() -> Self {
+        TrieNode {
+            data: Some(TrieData::default()),
+            children: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Default, Debug, Encode, Decode)]
 pub struct Trie {
-    root: TrieNode,
+    pub root: TrieNode,
     pub options: TrieOptions,
 }
 
@@ -33,6 +49,10 @@ impl Trie {
             root: TrieNode::default(),
             options: TrieOptions::new(),
         }
+    }
+
+    pub(crate) fn set_root(&mut self, root: TrieNode) {
+        self.root = root;
     }
 
     pub fn dump(&self) -> anyhow::Result<Vec<u8>> {
@@ -83,29 +103,52 @@ impl Trie {
             false
         }
     }
+
+    fn collect_words(&self, node: &TrieNode, prefix: String, words: &mut Vec<String>) {
+        if let Some(ref data) = node.data {
+            if !data.disallow {
+                words.push(prefix.clone());
+            }
+        }
+
+        for (c, child_node) in &node.children {
+            let mut new_prefix = prefix.clone();
+            new_prefix.push(*c);
+            self.collect_words(child_node, new_prefix, words);
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<String> {
+        let mut words = Vec::new();
+        self.collect_words(&self.root, String::new(), &mut words);
+        words
+    }
 }
 
-#[derive(Clone, Default, Debug, Encode, Decode)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct TrieOptions {
     pub cache: bool,
     pub case_sensitive: bool,
-    pub name: String,
+}
+
+impl Default for TrieOptions {
+    fn default() -> Self {
+        TrieOptions {
+            cache: true,
+            case_sensitive: false,
+        }
+    }
 }
 
 impl TrieOptions {
     pub fn new() -> Self {
-        TrieOptions {
-            cache: true,
-            case_sensitive: false,
-            name: String::new(),
-        }
+        TrieOptions::default()
     }
 
     pub fn add_command(&mut self, command: &Command) {
         match command {
             Command::CaseSensitive => self.case_sensitive = true,
             Command::Cache(cache) => self.cache = *cache,
-            Command::Name(name) => self.name = name.clone(),
         }
     }
 }

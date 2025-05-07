@@ -1,20 +1,25 @@
 {
-    "dictionary_definitions": [
-        {
-            "name": "custom",
-            "path": "./custom.txt"
-        }
-    ],
-    "dictionaries": [
-        "custom",
-        "en-US",
-        "extra",
-        "software_terms",
-        "software_tools",
-        "words"
-    ],
-    "ignore_paths": [
-        "**/target/**",
-        "**/node_modules/**"
-    ]
+  "dictionary_definitions": [
+    {
+      "name": "custom",
+      "path": "./custom.txt"
+    }
+  ],
+  "dictionaries": [
+    "custom",
+    "en-US",
+    "extra",
+    "rust",
+    "software_terms",
+    "software_tools",
+    "words"
+  ],
+  "ignore_paths": [
+    "**/target/**",
+    "**/node_modules/**"
+  ],
+  "words": [
+    "wordlist",
+    "wordlists"
+  ]
 }
