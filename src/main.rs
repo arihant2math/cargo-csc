@@ -1,15 +1,16 @@
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
 use dashmap::DashMap;
-use std::io::Write;
-use std::path::Path;
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
-use std::{collections::HashMap, fs, path::PathBuf};
-use tokio::sync::Mutex;
-use tokio::task;
-use tokio::time::Instant;
+use std::{
+    collections::HashMap,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+    thread,
+    time::Duration,
+};
+use tokio::{sync::Mutex, task, time::Instant};
 use url::Url;
 
 mod code;

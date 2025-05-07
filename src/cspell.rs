@@ -1,13 +1,16 @@
 mod trie;
 
-use crate::dictionary;
-use crate::filesystem::{store_path, tmp_path};
+use crate::{
+    dictionary,
+    filesystem::{store_path, tmp_path},
+};
 use anyhow::Context;
-use std::cell::RefCell;
-use std::fs;
-use std::io::Write;
-use std::path::Path;
-use std::path::PathBuf;
+use std::{
+    cell::RefCell,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 struct State {
     progress: Option<git2::Progress<'static>>,

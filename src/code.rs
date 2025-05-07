@@ -1,8 +1,6 @@
 use anyhow::bail;
 use std::path::PathBuf;
-use tokio::fs::File;
-use tokio::io;
-use tokio::io::AsyncReadExt;
+use tokio::{fs::File, io, io::AsyncReadExt};
 
 pub async fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Parser)> {
     let file = File::open(path).await?;

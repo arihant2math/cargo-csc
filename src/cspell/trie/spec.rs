@@ -1,7 +1,13 @@
+use crate::Trie;
 use flate2::bufread::GzDecoder;
-use std::io::Read;
-use std::ops::Deref;
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    io::Read,
+    ops::Deref,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Debug)]
 struct Version(pub String);
@@ -57,171 +63,153 @@ fn parse_header(input: &[String]) -> anyhow::Result<(usize, Header)> {
 
 struct TrieNode {
     eow: bool,
-    children: std::collections::HashMap<char, Arc<Mutex<TrieNode>>>,
+    children: HashMap<char, Rc<RefCell<TrieNode>>>,
+}
+/// Internal parse states.
+#[derive(Debug)]
+enum ParseState {
+    InWord,
+    Escape,
+    Remove,
+    InId { chars: Vec<char> },
 }
 
-fn parse_body(input: &[String], header: &Header) -> crate::Trie {
-    let stack = Mutex::new(Vec::new());
+/// Helper struct that builds a trie.
+struct TrieBuilder {
+    /// Flat storage of nodes (for reference indexing).
+    nodes: Vec<Rc<RefCell<TrieNode>>>,
+    /// Current path in the tree.
+    pos: Vec<Rc<RefCell<TrieNode>>>,
+}
 
-    let root = TrieNode {
-        eow: false,
-        children: std::collections::HashMap::new(),
-    };
-    let mut unlock = stack.lock().unwrap();
-    unlock.push(Arc::new(Mutex::new(root)));
-    enum State {
-        Escape,
-        Remove,
-        InId { chars: Vec<char> },
-        InWord,
-    }
-    let mut state = State::InWord;
-    let mut pos = Mutex::new(vec![unlock[0].clone()]);
-    drop(unlock);
-    for line in input {
-        for char in line.chars() {
-            let mut unlock = stack.lock().unwrap();
-            if char == '\n' {
-                continue;
-            }
-            if matches!(state, State::Escape) {
-                state = State::InWord;
-                let pos_lock = pos.lock().unwrap();
-                let last = pos_lock.last().unwrap().clone();
-                drop(pos_lock);
-                let last_lock = last.lock().unwrap();
-                if last_lock.children.contains_key(&char) {
-                    let mut pos_lock = pos.lock().unwrap();
-                    pos_lock.push(last_lock.children[&char].clone());
-                } else {
-                    let new_node = TrieNode {
-                        eow: false,
-                        children: std::collections::HashMap::new(),
-                    };
-                    unlock.push(Arc::new(Mutex::new(new_node)));
-                    let pos_lock = pos.lock().unwrap();
-                    let last = pos_lock.last().unwrap().clone();
-                    let mut last_lock = last.lock().unwrap();
-                    drop(pos_lock);
-                    last_lock
-                        .children
-                        .insert(char, unlock.last().unwrap().clone());
-                    let mut pos_lock = pos.lock().unwrap();
-                    pos_lock.push(unlock.last().unwrap().clone());
-                }
-                continue;
-            }
-
-            let to_remove = if matches!(state, State::Remove) && char.is_numeric() {
-                char.to_digit(10).unwrap()
-            } else if matches!(state, State::Remove) {
-                1
-            } else {
-                0
-            };
-            if to_remove > 0 {
-                state = State::InWord;
-                let mut pos_lock = pos.lock().unwrap();
-                for _ in 0..to_remove {
-                    pos_lock.pop();
-                }
-                drop(pos_lock);
-                continue;
-            }
-
-            if let State::InId { chars } = &mut state {
-                if char.is_numeric() {
-                    chars.push(char);
-                    continue;
-                } else {
-                    assert_eq!(char, ';');
-                    // convert chars to number with header specified base
-                    let number = chars.iter().collect::<String>();
-                    // convert to number in header.base
-                    let number = u32::from_str_radix(&number, header.base as u32)
-                        .expect("Failed to convert number");
-                    // TODO: This might not be kosher
-                    pos = Mutex::new(vec![unlock[number as usize].clone()]);
-                    state = State::InWord;
-                    continue;
-                }
-            }
-
-            if char == '\\' {
-                state = State::Escape;
-                continue;
-            } else if char == '$' {
-                let pos_lock = pos.lock().unwrap();
-                let last = pos_lock.last().unwrap();
-                let mut last_lock = last.lock().unwrap();
-                last_lock.eow = true;
-            } else if char == '<' {
-                state = State::Remove;
-            } else {
-                let pos_lock = pos.lock().unwrap();
-                let last = pos_lock.last().unwrap().clone();
-                drop(pos_lock);
-                let last_lock = last.lock().unwrap();
-                if last_lock.children.contains_key(&char) {
-                    let mut pos_lock = pos.lock().unwrap();
-                    pos_lock.push(last_lock.children[&char].clone());
-                } else {
-                    let new_node = TrieNode {
-                        eow: false,
-                        children: std::collections::HashMap::new(),
-                    };
-                    unlock.push(Arc::new(Mutex::new(new_node)));
-                    let pos_lock = pos.lock().unwrap();
-                    let last = pos_lock.last().unwrap().clone();
-                    drop(pos_lock);
-                    let mut last_lock = last.lock().unwrap();
-                    last_lock
-                        .children
-                        .insert(char, unlock.last().unwrap().clone());
-                    let mut pos_lock = pos.lock().unwrap();
-                    pos_lock.push(unlock.last().unwrap().clone());
-                }
-            }
+impl TrieBuilder {
+    fn new() -> Self {
+        let root = Rc::new(RefCell::new(TrieNode::new(false)));
+        Self {
+            nodes: vec![root.clone()],
+            pos: vec![root],
         }
     }
 
-    fn node_from_bool(eow: bool) -> crate::trie::TrieNode {
-        if eow {
+    /// Process a single character and update state.
+    fn process_char(&mut self, c: char, header_base: u32, state: &mut ParseState) {
+        match state {
+            ParseState::Escape => {
+                *state = ParseState::InWord;
+                self.add_char(c);
+            }
+            ParseState::Remove => {
+                let count = if c.is_numeric() {
+                    c.to_digit(10).unwrap_or(1)
+                } else {
+                    1
+                };
+                for _ in 0..count {
+                    self.pos.pop();
+                }
+                *state = ParseState::InWord;
+            }
+            ParseState::InId { chars } => {
+                if c.is_numeric() {
+                    chars.push(c);
+                } else if c == ';' {
+                    let number_str: String = chars.iter().collect();
+                    let idx = u32::from_str_radix(&number_str, header_base)
+                        .expect("Failed to convert number") as usize;
+                    if idx < self.nodes.len() {
+                        let node = self.nodes[idx].clone();
+                        self.pos = vec![node];
+                    }
+                    *state = ParseState::InWord;
+                }
+            }
+            ParseState::InWord => match c {
+                '\\' => *state = ParseState::Escape,
+                '$' => {
+                    if let Some(cur) = self.pos.last() {
+                        cur.borrow_mut().eow = true;
+                    }
+                }
+                '<' => *state = ParseState::Remove,
+                _ if c.is_numeric() => {
+                    *state = ParseState::InId { chars: vec![c] };
+                }
+                _ => self.add_char(c),
+            },
+        }
+    }
+
+    /// Add a character as a child node to the last node in the current path.
+    fn add_char(&mut self, c: char) {
+        if let Some(parent) = self.pos.last().cloned() {
+            let mut parent_borrow = parent.borrow_mut();
+            if let Some(child) = parent_borrow.children.get(&c) {
+                self.pos.push(child.clone());
+            } else {
+                let new_node = Rc::new(RefCell::new(TrieNode::new(false)));
+                parent_borrow.children.insert(c, new_node.clone());
+                self.nodes.push(new_node.clone());
+                self.pos.push(new_node);
+            }
+        }
+    }
+}
+
+impl TrieNode {
+    /// Create a new TrieNode.
+    fn new(eow: bool) -> Self {
+        TrieNode {
+            eow,
+            children: HashMap::new(),
+        }
+    }
+}
+
+/// Recursively convert the builder trie into the output Trie structure.
+fn convert_trie(builder_root: Rc<RefCell<TrieNode>>) -> Trie {
+    fn rec_convert(node: &Rc<RefCell<TrieNode>>) -> crate::trie::TrieNode {
+        let node_ref = node.borrow();
+        let mut out = if node_ref.eow {
             crate::trie::TrieNode::some_default()
         } else {
             crate::trie::TrieNode::none()
+        };
+        for (&c, child) in &node_ref.children {
+            out.children.insert(c, rec_convert(child));
         }
+        out
     }
-
-    fn convert(
-        node: Arc<Mutex<TrieNode>>,
-        stack: &Vec<Arc<Mutex<TrieNode>>>,
-    ) -> crate::trie::TrieNode {
-        let node = node.lock().unwrap();
-        let mut conv_node = node_from_bool(node.eow);
-        for (c, ptr) in &node.children {
-            let out = convert(ptr.clone(), stack);
-            conv_node.children.insert(*c, out);
-        }
-        conv_node
-    }
-
-    let l_stack = stack.lock().unwrap();
-    let root = l_stack.first().unwrap().lock().unwrap();
-    let mut conv_root = node_from_bool(root.eow);
-    for (c, ptr) in &root.children {
-        let out = convert(ptr.clone(), l_stack.deref());
-        conv_root.children.insert(*c, out);
-    }
-    crate::Trie {
-        root: conv_root,
+    let root_converted = rec_convert(&builder_root);
+    Trie {
+        root: root_converted,
         options: Default::default(),
     }
+}
+
+/// Refactored parse_body function.
+pub fn parse_body(input: &[String], header: &Header) -> crate::Trie {
+    let mut builder = TrieBuilder::new();
+    let mut state = ParseState::InWord;
+    let header_base = header.base as u32;
+
+    for line in input {
+        for ch in line.chars() {
+            if ch == '\n' {
+                continue;
+            }
+            builder.process_char(ch, header_base, &mut state);
+        }
+    }
+    let root = builder.nodes.first().unwrap().clone();
+    convert_trie(root)
 }
 
 pub fn parse_trie(input: &[String]) -> anyhow::Result<(Header, crate::Trie)> {
     let (counter, header) = parse_header(input)?;
     let body = &input[counter..];
+    dbg!(&body[0]);
+    dbg!(&body[1]);
+    dbg!(&body[2]);
     let trie = parse_body(body, &header);
     Ok((header, trie))
 }
@@ -285,6 +273,7 @@ mod tests {
             r"C:\Users\ariha\.code-spellcheck\tmp\cspell-dicts\dictionaries\en_US\en_US.trie";
         let lines = file_to_lines(path).unwrap();
         let (header, trie) = parse_trie(&lines).unwrap();
+        dbg!(trie);
         assert_eq!(header.version.to_u8(), 3);
     }
 }
