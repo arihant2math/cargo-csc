@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::{Trie, filesystem, store_path};
@@ -256,9 +256,9 @@ impl Dictionary {
                     serde_hjson::from_reader(std::fs::File::open(config_path)?)?;
                 Ok(vec![content.name])
             }
-            Dictionary::Trie(path) => {
-                Ok(vec![path.file_stem().unwrap().to_string_lossy().to_string()])
-            }
+            Dictionary::Trie(path) => Ok(vec![
+                path.file_stem().unwrap().to_string_lossy().to_string(),
+            ]),
             Dictionary::Rules(_) => Ok(vec![]),
         }
     }
@@ -288,8 +288,8 @@ impl Dictionary {
             }
             Dictionary::Rules(_) => {}
             // TODO: Fix
-            Dictionary::Custom { .. } => {},
-            &Dictionary::Trie(_) => todo!()
+            Dictionary::Custom { .. } => {}
+            &Dictionary::Trie(_) => todo!(),
         }
         match self {
             Dictionary::File(path) => {
@@ -377,7 +377,9 @@ impl Dictionary {
                 let trie = Trie::from(rules.as_ref());
                 Ok(trie)
             }
-            Dictionary::Trie(_) => {todo!()}
+            Dictionary::Trie(_) => {
+                todo!()
+            }
         }
     }
 
