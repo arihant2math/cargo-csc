@@ -417,7 +417,7 @@ mod tests {
         assert_eq!(v, vec!["0", "0th", "'cause", "'sup", "'tis", "'twas"]);
     }
 
-    // #[test]
+    #[test]
     fn test_parse_body_absolute_reference_3() {
         let header = Header {
             version: Version("TrieXv4".to_string()),

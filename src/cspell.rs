@@ -11,6 +11,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
+use git2::Repository;
 
 struct State {
     progress: Option<git2::Progress<'static>>,
@@ -42,10 +43,8 @@ fn print(state: &mut State) {
         );
     } else {
         print!(
-            "net {:3}% ({:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})  \
+            "net {network_pct:3}% ({kilobytes:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})  \
              /  chk {:3}% ({:4}/{:4}) {}\r",
-            network_pct,
-            kilobytes,
             stats.received_objects(),
             stats.total_objects(),
             index_pct,
@@ -90,6 +89,8 @@ fn clone<P: AsRef<Path>>(url: &str, path: P) -> Result<git2::Repository, git2::E
     });
 
     let mut fo = git2::FetchOptions::new();
+    // Shallow clone
+    fo.depth(1);
     fo.remote_callbacks(cb);
     let repo = git2::build::RepoBuilder::new()
         .fetch_options(fo)
@@ -100,18 +101,34 @@ fn clone<P: AsRef<Path>>(url: &str, path: P) -> Result<git2::Repository, git2::E
     Ok(repo)
 }
 
+const URL: &str = "https://github.com/streetsidesoftware/cspell-dicts";
+
 pub fn import() -> anyhow::Result<()> {
     let repo_path = tmp_path().join("cspell-dicts");
-    if !repo_path.exists() {
+    let repo = if !repo_path.exists() {
         fs::create_dir_all(&repo_path).context(format!(
             "Failed to create temporary directory: {}",
             repo_path.display()
         ))?;
 
-        let url = "https://github.com/streetsidesoftware/cspell-dicts";
-        println!("Cloning {url}");
-        let _repo = clone(url, &repo_path).with_context(|| format!("failed to clone: {}", url))?;
-    }
+        println!("Cloning {URL}");
+        clone(URL, &repo_path).with_context(|| format!("failed to clone: {}", URL))?
+    } else {
+        let res = Repository::open(&repo_path);
+        match res {
+            Ok(r) => {
+                // TODO: pull and update
+                r
+            },
+            Err(e) => {
+                eprintln!("Failed to open temporary directory: {}", e);
+                // Reclone
+                fs::remove_dir_all(&repo_path).ok();
+                println!("Recloning {URL}");
+                clone(URL, &repo_path).with_context(|| format!("failed to clone: {}", URL))?
+            }
+        }
+    };
     // TODO: checkout right commit (last tag)
 
     println!("Installing cspell dictionaries");
