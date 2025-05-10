@@ -1,277 +1,268 @@
-//! Trie file format v4 in Rust
-//! Ported from TypeScript implementation
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::cell::RefCell;
+use regex::Regex;
 
-use std::collections::{HashMap, HashSet};
-use std::fmt;
-use std::io::Read;
-use flate2::bufread::GzDecoder;
-
-pub const BACK: char = '<'; // placeholder
-pub const EOL: char = '\n';
-pub const EOR: char = '\r';
+pub const FLAG_WORD: u32 = 1;
 pub const EOW: char = '$';
+pub const BACK: char = '<';
+pub const EOL: char = '\n';
+pub const LF: char = '\r';
+pub const REF: char = '#';
+pub const REF_REL: char = '@';
+pub const EOR: char = ';';
 pub const ESCAPE: char = '\\';
-pub const LF: char = '\n';
-pub const REF: char = '@';
-pub const REF_REL: char = '#';
-
 const REF_INDEX_BEGIN: char = '[';
 const REF_INDEX_END: char = ']';
 const INLINE_DATA_COMMENT_LINE: char = '/';
-const WORDS_PER_LINE: usize = 20;
+const DATA: &str = "__DATA__";
 
-/// Trie node representation
-#[derive(Clone, Debug, Default)]
-pub struct CSpellTrieNode {
-    pub f: bool,
-    pub c: Option<HashMap<char, Box<CSpellTrieNode>>>,
+fn string_to_char_set(s: &str) -> HashMap<char, ()> {
+    let mut set = HashMap::new();
+    for c in s.chars() {
+        set.insert(c, ());
+    }
+    set
 }
 
-pub type CSpellTrieRoot = CSpellTrieNode;
-
-impl Into<crate::trie::TrieNode> for CSpellTrieRoot {
-    fn into(self) -> crate::trie::TrieNode {
-        let mut trie_node = crate::trie::TrieNode::default();
-        if self.f {
-            trie_node.data = Some(crate::trie::TrieData { disallow: false });
-        }
-        if let Some(children) = self.c {
-            trie_node.children = children
-                .into_iter()
-                .map(|(k, v)| (k, (*v).into()))
-                .collect();
-        }
-        trie_node
+fn create_lookup_map<T: Clone>(pairs: &[(char, T)]) -> HashMap<char, T> {
+    let mut m = HashMap::new();
+    for (k, v) in pairs.iter() {
+        m.insert(*k, v.clone());
     }
+    m
 }
 
-/// Export options
-pub struct ExportOptions {
-    pub base: usize,
-    pub comment: String,
-    pub optimize_simple_references: bool,
+fn special_char_map() -> HashMap<String, char> {
+    let arr = [('\n', "\\n"), ('\r', "\\r"), ('\\', "\\\\")];
+    let mut m = HashMap::new();
+    for (c, s) in arr.iter() {
+        m.insert(s.to_string(), *c);
+    }
+    m
 }
 
-impl Default for ExportOptions {
-    fn default() -> Self {
-        ExportOptions {
-            base: 10,
-            comment: String::new(),
-            optimize_simple_references: false,
-        }
-    }
+pub type ChildMap = HashMap<char, TrieNodePtr>;
+pub type TrieNodePtr = Rc<RefCell<TrieNode>>;
+
+pub struct TrieInfo {
+    pub compound_character: String,
+    pub strip_case_and_accents_prefix: String,
+    pub forbidden_word_prefix: String,
+    pub is_case_aware: bool,
 }
 
-/// Serialize a TrieRoot to V4 format
-pub fn serialize_trie(root: &CSpellTrieRoot, opts: Option<ExportOptions>) -> Vec<String> {
-    // ... existing serialization logic ...
-    unimplemented!()
+pub struct TrieNode {
+    pub f: Option<u32>,
+    pub c: Option<ChildMap>,
 }
 
-/// Deserialize lines of a V3/V4 trie into a TrieRoot
-pub fn import_trie(lines: &[String]) -> CSpellTrieRoot {
-    // Read header and determine radix
-    let mut radix = 10usize;
-    // clone each line into the iterator (so that the `.chars()` iterator owns its String)
-    let mut iter = lines
-        .iter()
-        .cloned() // own each String
-        .flat_map(|line| {
-            let line_chars: Vec<char> = line.chars().clone().collect();
-            line_chars.into_iter().chain(std::iter::once('\n'))
-        });
-    // Skip comments and header until DATA marker
-    let mut header = String::new();
-    while let Some(ch) = iter.next() {
-        // accumulate header lines
-        header.push(ch);
-        if header.ends_with("__DATA__\n") {
-            break;
-        }
-    }
-    // parse base from header
-    for line in header.lines() {
-        if let Some(rest) = line.strip_prefix("base=") {
-            radix = rest.parse().unwrap_or(10);
-        }
-    }
-
-    // Read reference index JSON array
-    let mut ref_json = String::new();
-    // consume until '['
-    while let Some(ch) = iter.next() {
-        if ch == REF_INDEX_BEGIN {
-            ref_json.push(ch);
-            break;
-        }
-    }
-    // collect until ']' inclusive
-    while let Some(ch) = iter.next() {
-        ref_json.push(ch);
-        if ch == REF_INDEX_END {
-            break;
-        }
-    }
-    // parse indices
-    let ref_index: Vec<usize> = ref_json
-        .trim_matches(&['[', ']'][..])
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
-
-    // Create root and parser state
-    let mut root = CSpellTrieNode::default();
-    let eow_node = Box::new(CSpellTrieNode { f: true, c: None });
-    let mut stack: Vec<(*mut CSpellTrieNode, char)> = Vec::new();
-    let root_ptr: *mut CSpellTrieNode = &mut root;
-    unsafe {
-        stack.push((root_ptr, '\0'));
-    }
-    let mut nodes: Vec<*mut CSpellTrieNode> = vec![root_ptr];
-
-    enum State {
-        Main,
-        InNumber { is_rel: bool, buf: String },
-        InEscape,
-        InComment { end_char: char, escaped: bool },
-    }
-    let mut state = State::Main;
-
-    for ch in iter {
-        state = match std::mem::replace(&mut state, State::Main) {
-            State::Main => match ch {
-                ESCAPE => State::InEscape,
-                EOW => {
-                    // mark current node as word
-                    let (node_ptr, _) = stack.last().unwrap();
-                    unsafe {
-                        (*(*node_ptr)).f = true;
-                    }
-                    // if no children, replace with eow_node
-                    State::Main
-                }
-                BACK => {
-                    // pop one
-                    stack.pop();
-                    State::Main
-                }
-                REF | REF_REL => State::InNumber {
-                    is_rel: ch == REF_REL,
-                    buf: String::new(),
-                },
-                INLINE_DATA_COMMENT_LINE => State::InComment {
-                    end_char: EOL,
-                    escaped: false,
-                },
-                EOL | LF => State::Main,
-                _ => {
-                    // regular character: add node
-                    let &(parent_ptr, _) = stack.last().unwrap();
-                    let parent = unsafe { &mut *parent_ptr };
-                    let mut child = CSpellTrieNode::default();
-                    let ch_copy = ch;
-                    parent
-                        .c
-                        .get_or_insert_with(HashMap::new)
-                        .insert(ch_copy, Box::new(child));
-                    let new_ptr: *mut CSpellTrieNode = {
-                        let map = parent.c.as_mut().unwrap();
-                        &mut **map.get_mut(&ch_copy).unwrap() as *mut _
-                    };
-                    stack.push((new_ptr, ch_copy));
-                    nodes.push(new_ptr);
-                    State::Main
-                }
-            },
-            State::InEscape => {
-                // consume next char literally
-                let real = ch;
-                // treat as in Main with real
-                state = State::Main;
-                State::Main
-            }
-            State::InNumber { is_rel, mut buf } => {
-                if ch.is_digit(radix as u32) {
-                    buf.push(ch);
-                    State::InNumber { is_rel, buf }
-                } else {
-                    // complete number
-                    if let Ok(idx) = usize::from_str_radix(&buf, radix as u32) {
-                        let target = if is_rel { ref_index[idx] } else { idx };
-                        let node_ptr = nodes[target];
-                        // attach reference: treat as child of parent
-                        let &(parent_ptr, ch_prev) = stack.last().unwrap();
-                        unsafe {
-                            let parent = &mut *parent_ptr;
-                            parent
-                                .c
-                                .get_or_insert_with(HashMap::new)
-                                .insert(ch_prev, Box::new((*node_ptr).clone()));
-                        }
-                    }
-                    // re-process ch in Main
-                    if ch == EOR {
-                        State::Main
-                    } else {
-                        // replay ch
-                        if ch == ESCAPE {
-                            State::InEscape
-                        } else {
-                            State::Main
-                        }
-                    }
-                }
-            }
-            State::InComment { end_char, escaped } => {
-                if escaped {
-                    state = State::InComment {
-                        end_char,
-                        escaped: false,
-                    };
-                    State::InComment {
-                        end_char,
-                        escaped: false,
-                    }
-                } else if ch == ESCAPE {
-                    State::InComment {
-                        end_char,
-                        escaped: true,
-                    }
-                } else if ch == end_char {
-                    State::Main
-                } else {
-                    State::InComment {
-                        end_char,
-                        escaped: false,
-                    }
-                }
-            }
-        };
-    }
-
-    root
+pub struct TrieRoot {
+    pub info: TrieInfo,
+    pub c: ChildMap,
 }
 
-pub fn file_to_lines<P: AsRef<std::path::Path>>(
-    path: P,
-) -> std::io::Result<Vec<String>> {
-    // Read the entire file into a byte buffer
-    let buf = std::fs::read(&path)?;
-    let filename = path.as_ref().to_string_lossy();
+struct StackItem {
+    node: TrieNodePtr,
+    ch: char,
+}
 
-    // Decode if gzipped, otherwise assume UTF-8 text
-    let text = if filename.ends_with(".gz") {
-        let mut decoder = GzDecoder::new(&buf[..]);
-        let mut s = String::new();
-        decoder.read_to_string(&mut s)?;
-        s
+struct ReduceResults {
+    stack: Vec<StackItem>,
+    nodes: Vec<TrieNodePtr>,
+    root: TrieRoot,
+    parser: Option<fn(&mut ReduceResults, char)>,
+}
+
+pub fn import_trie(lines: impl IntoIterator<Item=String>) -> TrieRoot {
+    let mut radix = 10;
+    let comment_re = Regex::new(r"^\s*#").unwrap();
+    let mut iter = Vec::new();
+    for line in lines {
+        for seg in line.split_inclusive('\n') {
+            iter.push(seg.to_string());
+        }
+    }
+    let mut header_rows = Vec::new();
+    let mut idx = 0;
+    while idx < iter.len() {
+        let line = iter[idx].trim();
+        idx += 1;
+        if line.is_empty() || comment_re.is_match(line) { continue; }
+        if line == DATA { break; }
+        header_rows.push(line.to_string());
+    }
+    parse_header(&header_rows, &mut radix);
+    let rest = iter[idx..].iter().cloned().collect::<Vec<_>>();
+    parse_stream(radix, rest)
+}
+
+fn parse_header(rows: &[String], radix: &mut usize) {
+    let header = rows.join("\n");
+    let re = Regex::new(r"^TrieXv[34]\nbase=(\d+)$").unwrap();
+    if let Some(cap) = re.captures(&header) {
+        *radix = cap[1].parse().unwrap();
     } else {
-        String::from_utf8(buf)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+        panic!("Unknown file format");
+    }
+}
+
+fn parse_stream(radix: usize, lines: Vec<String>) -> TrieRoot {
+    let special_map = special_char_map();
+    let numbers = string_to_char_set("0123456789");
+    let spaces = string_to_char_set(" \r\n\t");
+
+    let eow_node = Rc::new(RefCell::new(TrieNode { f: Some(FLAG_WORD), c: None }));
+    let mut ref_index: Vec<usize> = Vec::new();
+
+    // initialize root
+    let root_info = TrieInfo {
+        compound_character: String::new(),
+        strip_case_and_accents_prefix: String::new(),
+        forbidden_word_prefix: String::new(),
+        is_case_aware: false,
+    };
+    let root_ptr = Rc::new(RefCell::new(TrieNode { f: None, c: Some(HashMap::new()) }));
+    let mut root = TrieRoot { info: root_info, c: HashMap::new() };
+    root.c = root_ptr.borrow().c.clone().unwrap();
+
+    // State
+    let mut acc = ReduceResults {
+        stack: vec![StackItem { node: root_ptr.clone(), ch: '\0' }],
+        nodes: vec![root_ptr.clone()],
+        root: root,
+        parser: Some(parse_ref_index),
     };
 
-    // Split on newlines (`lines()` handles `\n` and `\r\n`)
-    Ok(text.lines()
-        .map(|s| s.to_string() + "\n")
-        .collect())
+    fn parser_main(acc: &mut ReduceResults, ch: char,
+                   map: &HashMap<String, char>, nums: &HashMap<char, ()>, spaces: &HashMap<char, ()>) {
+        let p = acc.parser.take();
+        let next = if let Some(func) = p {
+            func(acc, ch)
+        } else {
+            default_parse(acc, ch)
+        };
+        acc.parser = next;
+    }
+
+    // Character handlers:
+    fn default_parse(acc: &mut ReduceResults, ch: char) -> Option<fn(&mut ReduceResults, char)> {
+        match ch {
+            EOW => { parse_eow(acc, ch); Some(parse_back) },
+            BACK | '2'..='9' => Some(parse_back),
+            REF | REF_REL => { parse_reference(acc, ch); None },
+            ESCAPE => { Some(parse_escape) },
+            EOL | LF => None,
+            INLINE_DATA_COMMENT_LINE => { Some(parse_comment) },
+            c => { parse_char(acc, c); None }
+        }
+    }
+
+    fn parse_char(acc: &mut ReduceResults, ch: char) {
+        let mut node = acc.stack.last().unwrap().node.borrow_mut();
+        let mut cmap = node.c.take().unwrap_or_default();
+        let new_node = Rc::new(RefCell::new(TrieNode { f: None, c: None }));
+        cmap.insert(ch, new_node.clone());
+        node.c = Some(cmap);
+        drop(node);
+        acc.stack.push(StackItem { node: new_node.clone(), ch });
+        acc.nodes.push(new_node);
+    }
+
+    fn parse_eow(acc: &mut ReduceResults, _: char) {
+        let top = acc.stack.pop().unwrap();
+        top.node.borrow_mut().f = Some(FLAG_WORD);
+        if top.node.borrow().c.is_none() {
+            let prev = acc.stack.last().unwrap();
+            prev.node.borrow_mut().c.as_mut().unwrap().insert(top.ch, acc.nodes.pop().unwrap());
+        }
+    }
+
+    fn parse_back(acc: &mut ReduceResults, ch: char) -> Option<fn(&mut ReduceResults, char)> {
+        let cnt = if ch == BACK { 1 } else { ch.to_digit(10).unwrap() as usize - 1 };
+        for _ in 0..cnt { acc.stack.pop(); }
+        Some(parse_back)
+    }
+
+    fn parse_reference(acc: &mut ReduceResults, rch: char) {
+        let is_index = rch == REF_REL;
+        let mut ref_str = String::new();
+        acc.nodes.pop();
+        fn inner(acc: &mut ReduceResults, ch: char) -> Option<fn(&mut ReduceResults, char)> {
+            if ch == EOR || (!acc.root.info.is_case_aware && !ch.is_ascii_digit()) {
+                let idx = usize::from_str_radix(&ref_str, acc.parser as usize).unwrap_or(0);
+                let target = if is_index { ref_index[idx] } else { idx };
+                let prev = acc.stack.pop().unwrap();
+                let parent = &acc.stack.last().unwrap().node;
+                parent.borrow_mut().c.as_mut().unwrap().insert(prev.ch, acc.nodes[target].clone());
+                return None;
+            }
+            ref_str.push(ch);
+            Some(inner)
+        }
+        acc.parser = Some(inner);
+    }
+
+    fn parse_escape(acc: &mut ReduceResults, _: char) -> Option<fn(&mut ReduceResults, char)> {
+        let mut prev = None;
+        fn inner(acc: &mut ReduceResults, ch: char) -> Option<fn(&mut ReduceResults, char)> {
+            if let Some(p) = prev.take() {
+                let mut s = p.to_string(); s.push(ch);
+                let real = special_char_map().get(&s).cloned().unwrap_or(ch);
+                parse_char(acc, real);
+                None
+            } else if ch == ESCAPE {
+                prev = Some(ch);
+                Some(inner)
+            } else {
+                parse_char(acc, ch);
+                None
+            }
+        }
+        Some(inner)
+    }
+
+    fn parse_comment(acc: &mut ReduceResults, _: char) -> Option<fn(&mut ReduceResults, char)> {
+        let mut escape = false;
+        fn inner(acc: &mut ReduceResults, ch: char) -> Option<fn(&mut ReduceResults, char)> {
+            if escape { escape = false; return Some(inner); }
+            if ch == ESCAPE { escape = true; return Some(inner); }
+            if ch == INLINE_DATA_COMMENT_LINE { return None; }
+            Some(inner)
+        }
+        Some(inner)
+    }
+
+    fn parse_ref_index(acc: &mut ReduceResults, ch: char) -> Option<fn(&mut ReduceResults, char)> {
+        let mut buf = String::new();
+        fn start(acc: &mut ReduceResults, ch: char) -> Option<fn(&mut ReduceResults, char)> {
+            if ch == REF_INDEX_BEGIN {
+                buf.push(ch);
+                return Some(inner);
+            }
+            if spaces.contains_key(&ch) { return Some(start); }
+            None
+        }
+        fn inner(acc: &mut ReduceResults, ch: char) -> Option<fn(&mut ReduceResults, char)> {
+            buf.push(ch);
+            if ch == REF_INDEX_END {
+                buf.retain(|c| c!='[' && c!=']' && !c.is_whitespace());
+                ref_index = buf.split(',')
+                    .map(|s| usize::from_str_radix(s, radix).unwrap())
+                    .collect();
+                return None;
+            }
+            Some(inner)
+        }
+        Some(start)
+    }
+
+    // Run parsing
+    for line in lines {
+        for ch in line.chars() {
+            parser_main(&mut acc, ch, &special_map, &numbers, &spaces);
+        }
+    }
+
+    acc.root
 }
