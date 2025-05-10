@@ -61,8 +61,8 @@ fn parse_header(input: &[String]) -> anyhow::Result<(usize, Header)> {
 
 struct TrieNode {
     eow: bool,
-    parent: Option<Rc<RefCell<TrieNode>>>,
     children: HashMap<char, Rc<RefCell<TrieNode>>>,
+    ch: char
 }
 
 /// Internal parse states.
@@ -70,7 +70,7 @@ struct TrieNode {
 enum ParseState {
     InWord,
     Escape,
-    Remove,
+    Remove(bool),
     AbsoluteReference { chars: Vec<char> },
     // TODO: impl
     // RelRef { chars: Vec<char> },
@@ -104,23 +104,24 @@ impl TrieBuilder {
                 .position(|p| Rc::ptr_eq(&p, &node))
                 .map(|p| p as i64)
                 .unwrap_or(-1);
-            let mut c = self.get_char(node);
+            // TODO: Fix
+            let c = ' ';
             let node_borrow = node.borrow();
             let mut child_ids: Vec<_> = node_borrow
                 .children
-                .values()
-                .map(|v| {
+                .iter()
+                .map(|(&ch, v)| {
                     // Find position in nodes
-                    self.nodes
+                    (ch, self.nodes
                         .iter()
                         .position(|p| Rc::ptr_eq(&p, &v))
-                        .unwrap_or(usize::MAX)
+                        .unwrap_or(usize::MAX))
                 })
                 .collect();
-            child_ids.sort();
+            child_ids.sort_by(|a, b| a.1.cmp(&b.1));
             let children = child_ids
                 .iter()
-                .map(|v| v.to_string())
+                .map(|(chr, v)| v.to_string() + "=" + &chr.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
             println!(
@@ -132,52 +133,33 @@ impl TrieBuilder {
         }
     }
 
-    fn get_char(&self, node: &Rc<RefCell<TrieNode>>) -> char {
-        // Get parent
-        let node_borrow = node.borrow();
-        let parent = node.borrow().parent.clone();
-        if let Some(parent) = parent {
-            let parent_borrow = parent.borrow();
-            for (c, child) in &parent_borrow.children {
-                if Rc::ptr_eq(&child, node) {
-                    return *c;
-                }
-            }
-        }
-        ' '
-    }
-
     /// Absolute jump to a node in the trie.
     fn jump_to(&mut self, idx: usize) {
-        // 1) Peek, don’t pop:
-        let last = self.pos.last().unwrap().clone();
+        let target = self.nodes[idx].clone();
 
-        // 2) Get the char and parent:
-        let ch = self.get_char(&last);
-        let parent = last.borrow().parent.clone().unwrap();
+        let target_ref = target.borrow();
+        let ch = target_ref.ch;
+        drop(target_ref);
 
-        // 3) Redirect that slot, _in-place_:
-        parent.borrow_mut().children.insert(ch, Rc::clone(&self.nodes[idx]));
-
-        // 4) Replace the top of the stack with the referenced node:
-        *self.pos.last_mut().unwrap() = Rc::clone(&self.nodes[idx]);
+        let last_pos = self.pos.last().unwrap().clone();
+        let mut last_pos_ref = last_pos.borrow_mut();
+        last_pos_ref.children.insert(ch, target.clone());
+        self.pos.push(target);
     }
 
     /// Process a single character and update state.
     fn process_char(&mut self, c: char, header_base: u32, state: &mut ParseState) {
-        dbg!(c, &state);
-        self.dbg_state();
         match state {
             ParseState::Escape => {
                 self.add_char(c);
                 *state = ParseState::InWord;
             }
-            ParseState::Remove => {
+            ParseState::Remove(b) => {
                 let count = if c.is_numeric() {
                     let out = c.to_digit(10).unwrap();
                     // As per the spec, out can't be 1
                     assert_ne!(out, 1);
-                    out
+                    (out as i32 - if *b { -1 } else { 0 }) as u32
                 } else {
                     1
                 };
@@ -194,9 +176,9 @@ impl TrieBuilder {
                             if let Some(cur) = self.pos.last() {
                                 cur.borrow_mut().eow = true;
                             }
-                            *state = ParseState::Remove;
+                            *state = ParseState::Remove(false);
                         }
-                        '<' => *state = ParseState::Remove,
+                        '<' => *state = ParseState::Remove(false),
                         '#' => {
                             *state = ParseState::AbsoluteReference { chars: vec![c] };
                         }
@@ -205,6 +187,8 @@ impl TrieBuilder {
                             *state = ParseState::InWord;
                         },
                     }
+                } else {
+                    *state = ParseState::InWord;
                 }
             }
             ParseState::AbsoluteReference { chars } => {
@@ -229,15 +213,17 @@ impl TrieBuilder {
                     if let Some(cur) = self.pos.last() {
                         cur.borrow_mut().eow = true;
                     }
-                    *state = ParseState::Remove;
+                    *state = ParseState::Remove(false);
                 }
-                '<' => *state = ParseState::Remove,
+                '<' => *state = ParseState::Remove(false),
                 '#' => {
                     *state = ParseState::AbsoluteReference { chars: vec![c] };
                 }
                 _ => self.add_char(c),
             },
         }
+        dbg!(c, &state);
+        self.dbg_state();
     }
 
     /// Add a character as a child node to the last node in the current path.
@@ -248,7 +234,7 @@ impl TrieBuilder {
                 self.pos.push(child.clone());
             } else {
                 // TODO: causes leak
-                let new_node = Rc::new(RefCell::new(TrieNode::new(parent.clone(), false)));
+                let new_node = Rc::new(RefCell::new(TrieNode::new(c, false)));
                 parent_borrow.children.insert(c, new_node.clone());
                 self.nodes.push(new_node.clone());
                 self.pos.push(new_node);
@@ -262,30 +248,20 @@ impl TrieBuilder {
 
 impl TrieNode {
     /// Create a new TrieNode.
-    fn new(parent: Rc<RefCell<Self>>, eow: bool) -> Self {
-        TrieNode {
+    fn new(ch: char, eow: bool) -> Self {
+        Self {
             eow,
             children: HashMap::new(),
-            parent: Some(parent),
+            ch
         }
     }
 
     fn new_root() -> Self {
-        TrieNode {
+        Self {
             eow: false,
             children: HashMap::new(),
-            parent: None,
+            ch: '\0'
         }
-    }
-
-    fn deep_clone(&self) -> Self {
-        let mut new_node = TrieNode::new_root();
-        new_node.eow = self.eow;
-        for (c, child) in &self.children {
-            let child_clone = child.borrow().deep_clone();
-            new_node.children.insert(*c, Rc::new(RefCell::new(child_clone)));
-        }
-        new_node
     }
 }
 
@@ -298,8 +274,8 @@ fn convert_trie(builder_root: Rc<RefCell<TrieNode>>) -> Trie {
         } else {
             crate::trie::TrieNode::none()
         };
-        for (&c, child) in &node_ref.children {
-            out.children.insert(c, rec_convert(child));
+        for (ch, child) in &node_ref.children {
+            out.children.insert(*ch, rec_convert(child));
         }
         out
     }
@@ -311,7 +287,7 @@ fn convert_trie(builder_root: Rc<RefCell<TrieNode>>) -> Trie {
 }
 
 /// Refactored parse_body function.
-pub fn parse_body(input: &[String], header: &Header) -> crate::Trie {
+pub fn parse_body(input: &[String], header: &Header) -> Trie {
     let mut builder = TrieBuilder::new();
     let mut state = ParseState::InWord;
     let header_base = header.base as u32;
@@ -328,7 +304,7 @@ pub fn parse_body(input: &[String], header: &Header) -> crate::Trie {
     convert_trie(root)
 }
 
-pub fn parse_trie(input: &[String]) -> anyhow::Result<(Header, crate::Trie)> {
+pub fn parse_trie(input: &[String]) -> anyhow::Result<(Header, Trie)> {
     let (counter, header) = parse_header(input)?;
     let body = &input[counter..];
     let trie = parse_body(body, &header);
@@ -359,7 +335,7 @@ pub fn file_to_lines<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Vec<
 mod tests {
     use super::*;
 
-    // #[test]
+    #[test]
     fn test_parse_header() {
         let input = vec![
             "TrieXv4".to_string(),
@@ -372,8 +348,8 @@ mod tests {
         assert_eq!(header.base, 10);
     }
 
-    // #[test]
-    fn test_parse_body_basic() {
+    #[test]
+    fn test_parse_body_word_end() {
         let header = Header {
             version: Version("TrieXv4".to_string()),
             base: 10,
@@ -389,6 +365,72 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_body_escape() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 10,
+        };
+        let input = vec!["a\\$".to_string(), "b$".to_string(), "c$".to_string(), "<2def$".to_string()];
+        let trie = parse_body(&input, &header);
+        assert!(!trie.contains("a"));
+        assert!(trie.contains("a$b"));
+        assert!(trie.contains("a$c"));
+        assert!(trie.contains("def"));
+    }
+
+    #[test]
+    fn test_parse_body_remove() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 10,
+        };
+        let input = vec!["a$word$<3no$".to_string()];
+        let trie = parse_body(&input, &header);
+        let mut v = trie.to_vec();
+        v.sort();
+        assert_eq!(v, vec!["a", "no", "word"]);
+    }
+
+    #[test]
+    fn test_parse_body_absolute_reference() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 10,
+        };
+        let input = vec!["apple$<<<n$<banb#1;".to_string()];
+        let trie = parse_body(&input, &header);
+        let mut v = trie.to_vec();
+        v.sort();
+        assert_eq!(v, vec!["an", "apple", "banbn", "banbpple"]);
+    }
+
+    #[test]
+    fn test_parse_body_absolute_reference_2() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 32,
+        };
+        let input = vec![r"\'cause$5sup$3tis$2wa#9;<4\0th$2$".to_string()];
+        let trie = parse_body(&input, &header);
+        let mut v = trie.to_vec();
+        v.sort();
+        assert_eq!(v, vec!["0", "0th", "'cause", "'sup", "'tis", "'twas"]);
+    }
+
+    // #[test]
+    fn test_parse_body_absolute_reference_3() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 32,
+        };
+        let input = vec![r"\'cause$5sup$3tis$2wa#9;<4\0th$2$\1st$2$\2nd$2$\3r#g;".to_string()];
+        let trie = parse_body(&input, &header);
+        let mut v = trie.to_vec();
+        v.sort();
+        assert_eq!(v, vec!["'cause", "'sup", "'tis", "'twas", "0", "0th", "1", "1st", "2", "2nd", "3rd"]);
+    }
+
+    // #[test]
     fn test_small() {
         let path = r"D:\Documents\Programming\cargo-csc\test.trie";
         let lines = file_to_lines(path).unwrap();

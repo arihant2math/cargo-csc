@@ -1,5 +1,5 @@
-use anyhow::{Context, bail};
-use clap::{Args, Parser, Subcommand};
+use anyhow::{bail, Context};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use dashmap::DashMap;
 use std::{
     collections::HashMap,
@@ -21,12 +21,20 @@ mod multi_trie;
 mod settings;
 mod trie;
 
-pub use code::{Typo, get_code, handle_node};
-pub use dictionary::{Dictionary, Rule};
-pub use filesystem::{cache_path, get_file_extension, store_path};
+pub use code::{get_code, handle_node, Typo};
+pub use dictionary::Dictionary;
+pub use filesystem::{cache_path, store_path};
 pub use multi_trie::MultiTrie;
 pub use settings::Settings;
 pub use trie::Trie;
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum OutputFormat {
+    /// JSON output
+    Json,
+    /// Text output
+    Text,
+}
 
 #[derive(Clone, Debug, Args)]
 pub struct CheckArgs {
@@ -53,6 +61,8 @@ pub struct CheckArgs {
     jobs: Option<usize>,
     #[clap(long)]
     settings: Option<PathBuf>,
+    #[clap(long)]
+    output: Option<OutputFormat>,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -323,6 +333,10 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
         .collect::<Vec<_>>();
     let mut counter = 0;
     drop(result_sender);
+    let output = context.settings.args.output.clone().unwrap_or(OutputFormat::Text);
+    if matches!(&output, OutputFormat::Json) {
+        todo!();
+    }
     while let Some(result) = result_receiver.recv().await {
         counter += 1;
         if context.settings.verbose() || context.settings.args.progress {
