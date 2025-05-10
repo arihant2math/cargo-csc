@@ -1,17 +1,19 @@
 mod trie;
 
+pub use trie::CspellTrie;
+
 use crate::{
     dictionary,
     filesystem::{store_path, tmp_path},
 };
 use anyhow::Context;
+use git2::Repository;
 use std::{
     cell::RefCell,
     fs,
     io::Write,
     path::{Path, PathBuf},
 };
-use git2::Repository;
 
 struct State {
     progress: Option<git2::Progress<'static>>,
@@ -119,7 +121,7 @@ pub fn import() -> anyhow::Result<()> {
             Ok(r) => {
                 // TODO: pull and update
                 r
-            },
+            }
             Err(e) => {
                 eprintln!("Failed to open temporary directory: {}", e);
                 // Reclone

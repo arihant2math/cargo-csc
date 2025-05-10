@@ -1,11 +1,6 @@
 use crate::Trie;
 use flate2::bufread::GzDecoder;
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    io::Read,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, io::Read, rc::Rc};
 
 #[derive(Debug)]
 struct Version(pub String);
@@ -62,7 +57,7 @@ fn parse_header(input: &[String]) -> anyhow::Result<(usize, Header)> {
 struct TrieNode {
     eow: bool,
     children: HashMap<char, Rc<RefCell<TrieNode>>>,
-    ch: char
+    ch: char,
 }
 
 /// Internal parse states.
@@ -112,10 +107,13 @@ impl TrieBuilder {
                 .iter()
                 .map(|(&ch, v)| {
                     // Find position in nodes
-                    (ch, self.nodes
-                        .iter()
-                        .position(|p| Rc::ptr_eq(&p, &v))
-                        .unwrap_or(usize::MAX))
+                    (
+                        ch,
+                        self.nodes
+                            .iter()
+                            .position(|p| Rc::ptr_eq(&p, &v))
+                            .unwrap_or(usize::MAX),
+                    )
                 })
                 .collect();
             child_ids.sort_by(|a, b| a.1.cmp(&b.1));
@@ -185,7 +183,7 @@ impl TrieBuilder {
                         _ => {
                             self.add_char(c);
                             *state = ParseState::InWord;
-                        },
+                        }
                     }
                 } else {
                     *state = ParseState::InWord;
@@ -252,7 +250,7 @@ impl TrieNode {
         Self {
             eow,
             children: HashMap::new(),
-            ch
+            ch,
         }
     }
 
@@ -260,7 +258,7 @@ impl TrieNode {
         Self {
             eow: false,
             children: HashMap::new(),
-            ch: '\0'
+            ch: '\0',
         }
     }
 }
@@ -370,7 +368,12 @@ mod tests {
             version: Version("TrieXv4".to_string()),
             base: 10,
         };
-        let input = vec!["a\\$".to_string(), "b$".to_string(), "c$".to_string(), "<2def$".to_string()];
+        let input = vec![
+            "a\\$".to_string(),
+            "b$".to_string(),
+            "c$".to_string(),
+            "<2def$".to_string(),
+        ];
         let trie = parse_body(&input, &header);
         assert!(!trie.contains("a"));
         assert!(trie.contains("a$b"));
@@ -427,7 +430,12 @@ mod tests {
         let trie = parse_body(&input, &header);
         let mut v = trie.to_vec();
         v.sort();
-        assert_eq!(v, vec!["'cause", "'sup", "'tis", "'twas", "0", "0th", "1", "1st", "2", "2nd", "3rd"]);
+        assert_eq!(
+            v,
+            vec![
+                "'cause", "'sup", "'tis", "'twas", "0", "0th", "1", "1st", "2", "2nd", "3rd"
+            ]
+        );
     }
 
     // #[test]
