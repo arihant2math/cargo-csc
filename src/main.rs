@@ -17,6 +17,7 @@ mod code;
 mod cspell;
 mod dictionary;
 mod filesystem;
+pub mod git;
 mod multi_trie;
 mod settings;
 mod trie;

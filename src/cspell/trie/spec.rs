@@ -167,13 +167,15 @@ impl TrieBuilder {
                     '<' => {
                         self.pos.pop().unwrap();
                         *state = ParseState::Remove
-                    },
+                    }
                     '#' => {
                         *state = ParseState::AbsoluteReference { chars: vec![c] };
                     }
                     d if d.is_digit(10) && d != '1' => {
                         let n = d.to_digit(10).unwrap() - 1;
-                        for _ in 0..n { self.pos.pop().unwrap(); }
+                        for _ in 0..n {
+                            self.pos.pop().unwrap();
+                        }
                         // stay in Remove
                     }
                     // any other character: exit Remove-mode and re-process it
