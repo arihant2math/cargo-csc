@@ -1,104 +1,16 @@
 mod trie;
 
+pub use trie::CspellTrie;
+
 use crate::{
     dictionary,
     filesystem::{store_path, tmp_path},
 };
 use anyhow::Context;
-use std::{
-    cell::RefCell,
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-};
+use git2::Repository;
+use std::{fs, io::Write};
 
-struct State {
-    progress: Option<git2::Progress<'static>>,
-    total: usize,
-    current: usize,
-    path: Option<PathBuf>,
-    newline: bool,
-}
-
-fn print(state: &mut State) {
-    let stats = state.progress.as_ref().unwrap();
-    let network_pct = (100 * stats.received_objects()) / stats.total_objects();
-    let index_pct = (100 * stats.indexed_objects()) / stats.total_objects();
-    let co_pct = if state.total > 0 {
-        (100 * state.current) / state.total
-    } else {
-        0
-    };
-    let kilobytes = stats.received_bytes() / 1024;
-    if stats.received_objects() == stats.total_objects() {
-        if !state.newline {
-            println!();
-            state.newline = true;
-        }
-        print!(
-            "Resolving deltas {}/{}\r",
-            stats.indexed_deltas(),
-            stats.total_deltas()
-        );
-    } else {
-        print!(
-            "net {:3}% ({:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})  \
-             /  chk {:3}% ({:4}/{:4}) {}\r",
-            network_pct,
-            kilobytes,
-            stats.received_objects(),
-            stats.total_objects(),
-            index_pct,
-            stats.indexed_objects(),
-            stats.total_objects(),
-            co_pct,
-            state.current,
-            state.total,
-            state
-                .path
-                .as_ref()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        )
-    }
-    std::io::stdout().flush().unwrap();
-}
-
-fn clone<P: AsRef<Path>>(url: &str, path: P) -> Result<git2::Repository, git2::Error> {
-    let state = RefCell::new(State {
-        progress: None,
-        total: 0,
-        current: 0,
-        path: None,
-        newline: false,
-    });
-    let mut cb = git2::RemoteCallbacks::new();
-    cb.transfer_progress(|stats| {
-        let mut state = state.borrow_mut();
-        state.progress = Some(stats.to_owned());
-        print(&mut state);
-        true
-    });
-
-    let mut co = git2::build::CheckoutBuilder::new();
-    co.progress(|path, cur, total| {
-        let mut state = state.borrow_mut();
-        state.path = path.map(|p| p.to_path_buf());
-        state.current = cur;
-        state.total = total;
-        print(&mut state);
-    });
-
-    let mut fo = git2::FetchOptions::new();
-    fo.remote_callbacks(cb);
-    let repo = git2::build::RepoBuilder::new()
-        .fetch_options(fo)
-        .with_checkout(co)
-        .clone(url, path.as_ref())?;
-    println!();
-
-    Ok(repo)
-}
+const URL: &str = "https://github.com/streetsidesoftware/cspell-dicts";
 
 pub fn import() -> anyhow::Result<()> {
     let repo_path = tmp_path().join("cspell-dicts");
@@ -108,11 +20,29 @@ pub fn import() -> anyhow::Result<()> {
             repo_path.display()
         ))?;
 
-        let url = "https://github.com/streetsidesoftware/cspell-dicts";
-        println!("Cloning {url}");
-        let _repo = clone(url, &repo_path).with_context(|| format!("failed to clone: {}", url))?;
+        println!("Cloning {URL}");
+        crate::git::clone(URL, &repo_path).with_context(|| format!("failed to clone: {}", URL))?;
+    } else {
+        let res = Repository::open(&repo_path);
+        match res {
+            Ok(repo) => {
+                // Update repo
+                let mut remote = repo.find_remote("origin")?;
+                let remote_branch = "main";
+                let fetch_commit = crate::git::fetch(&repo, &[remote_branch], &mut remote)?;
+                crate::git::merge(&repo, &remote_branch, fetch_commit)?;
+                drop(remote);
+            }
+            Err(e) => {
+                eprintln!("Failed to open temporary directory: {}", e);
+                // Reclone
+                fs::remove_dir_all(&repo_path).ok();
+                println!("Recloning {URL}");
+                crate::git::clone(URL, &repo_path)
+                    .with_context(|| format!("failed to clone: {}", URL))?;
+            }
+        }
     }
-    // TODO: checkout right commit (last tag)
 
     println!("Installing cspell dictionaries");
     let dicts_root = repo_path.join("dictionaries");

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dashmap::DashMap;
 use std::{
@@ -17,11 +17,12 @@ mod code;
 mod cspell;
 mod dictionary;
 mod filesystem;
+pub mod git;
 mod multi_trie;
 mod settings;
 mod trie;
 
-pub use code::{get_code, handle_node, Typo};
+pub use code::{Typo, get_code, handle_node};
 pub use dictionary::Dictionary;
 pub use filesystem::{cache_path, store_path};
 pub use multi_trie::MultiTrie;
@@ -333,7 +334,12 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
         .collect::<Vec<_>>();
     let mut counter = 0;
     drop(result_sender);
-    let output = context.settings.args.output.clone().unwrap_or(OutputFormat::Text);
+    let output = context
+        .settings
+        .args
+        .output
+        .clone()
+        .unwrap_or(OutputFormat::Text);
     if matches!(&output, OutputFormat::Json) {
         todo!();
     }

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::{Trie, filesystem, store_path};
@@ -140,6 +140,8 @@ pub enum Dictionary {
     File(PathBuf),
     /// A dictionary that is loaded from a directory
     Directory(PathBuf),
+    /// A cspell trie
+    Trie(PathBuf),
     /// Custom
     Custom {
         definition: crate::settings::CustomDictionaryDefinition,
@@ -254,6 +256,9 @@ impl Dictionary {
                     serde_hjson::from_reader(std::fs::File::open(config_path)?)?;
                 Ok(vec![content.name])
             }
+            Dictionary::Trie(path) => Ok(vec![
+                path.file_stem().unwrap().to_string_lossy().to_string(),
+            ]),
             Dictionary::Rules(_) => Ok(vec![]),
         }
     }
@@ -284,6 +289,7 @@ impl Dictionary {
             Dictionary::Rules(_) => {}
             // TODO: Fix
             Dictionary::Custom { .. } => {}
+            &Dictionary::Trie(_) => todo!(),
         }
         match self {
             Dictionary::File(path) => {
@@ -320,14 +326,27 @@ impl Dictionary {
                 let content: DictionaryConfig =
                     serde_hjson::from_reader(std::fs::File::open(config_path)?)?;
                 let mut rules = Vec::new();
-                for path_str in content.paths {
+                for path_str in &content.paths {
                     let path_str = path_str.trim().to_string();
                     let file_path = relative_path::RelativePath::new(&path_str);
                     let file_path = file_path.to_path(path);
                     if file_path.exists() {
-                        let content = std::fs::read_to_string(&file_path)?;
-                        let rules_part = load_dictionary_format(&content)?;
-                        rules.extend(rules_part);
+                        if file_path.extension().unwrap().to_str().unwrap() == "trie" {
+                            let mut trie = crate::cspell::CspellTrie::parse_trie(&file_path)?;
+                            if content.paths.len() != 1 {
+                                bail!("If trie is compiled, there can only be one path");
+                            }
+                            trie.options.case_sensitive = content.case_sensitive;
+                            trie.options.cache = !content.no_cache;
+                            if trie.options.cache {
+                                Self::save_to_cache(&trie, path)?;
+                            }
+                            return Ok(trie);
+                        } else {
+                            let content = std::fs::read_to_string(&file_path)?;
+                            let rules_part = load_dictionary_format(&content)?;
+                            rules.extend(rules_part);
+                        }
                     } else {
                         return Err(anyhow::anyhow!(
                             "Dictionary file does not exist: {}",
@@ -357,6 +376,9 @@ impl Dictionary {
                 new_rules.push(Rule::Command(Command::Cache(false)));
                 let trie = Trie::from(rules.as_ref());
                 Ok(trie)
+            }
+            Dictionary::Trie(_) => {
+                todo!()
             }
         }
     }
