@@ -289,7 +289,11 @@ impl Dictionary {
             Dictionary::Rules(_) => {}
             // TODO: Fix
             Dictionary::Custom { .. } => {}
-            &Dictionary::Trie(_) => todo!(),
+            &Dictionary::Trie(ref path) => {
+                if let Some(cache) = self.load_from_cache(path)? {
+                    return Ok(cache);
+                }
+            },
         }
         match self {
             Dictionary::File(path) => {
@@ -377,8 +381,13 @@ impl Dictionary {
                 let trie = Trie::from(rules.as_ref());
                 Ok(trie)
             }
-            Dictionary::Trie(_) => {
-                todo!()
+            Dictionary::Trie(path) => {
+                let content = std::fs::read(path)?;
+                let trie = Trie::load(&content)?;
+                if trie.options.cache {
+                    Self::save_to_cache(&trie, path)?;
+                }
+                Ok(trie)
             }
         }
     }
