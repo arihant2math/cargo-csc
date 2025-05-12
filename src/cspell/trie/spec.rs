@@ -361,7 +361,7 @@ mod tests {
     fn test_parse_body_escape() {
         let header = Header {
             version: Version("TrieXv4".to_string()),
-            base: 10,
+            base: 32,
         };
         let input = vec![
             "a\\$".to_string(),
@@ -380,7 +380,7 @@ mod tests {
     fn test_parse_body_remove() {
         let header = Header {
             version: Version("TrieXv4".to_string()),
-            base: 10,
+            base: 32,
         };
         let input = vec!["a$word$<3no$".to_string()];
         let trie = parse_body(&input, &header);
@@ -393,7 +393,7 @@ mod tests {
     fn test_parse_body_absolute_reference() {
         let header = Header {
             version: Version("TrieXv4".to_string()),
-            base: 10,
+            base: 32,
         };
         let input = vec!["apple$<<<n$<banb#1;".to_string()];
         let trie = parse_body(&input, &header);

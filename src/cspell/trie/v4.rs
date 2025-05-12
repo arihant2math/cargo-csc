@@ -1,26 +1,17 @@
-// /* eslint-disable no-irregular-whitespace */
-// /**
-//  * Trie file format v4
-//  *
-//  * Trie format v4 is very similar to v3. The v4 reader can even read v3 files.
-//  * The motivation behind v4 is to reduce the cost of storing `.trie` files in git.
-//  * When a word is added in v3, nearly the entire file is changed due to the absolute
-//  * references. V4 adds an index sorted by the most frequently used reference to the least.
-//  * Because git diff is line based, it is important to add line breaks at logical points.
-//  * V3 added line breaks just to make sure the lines were not too long, V4 takes a different
-//  * approach. Line breaks are added at two distinct points. First, at the start of each two
-//  * letter prefix and second after approximately 50 words have been emitted.
-//  *
-//  * To improve readability and git diff, at the beginning of each two letter prefix,
-//  * a comment is emitted.
-//  *
-//  * Example:
-//  *
-//  * ```
-//  * /* ab *​/
-//  * ```
-//  */
-//
+//! Trie file format v4
+//!
+//! Trie format v4 is very similar to v3. The v4 reader can even read v3 files.
+//! The motivation behind v4 is to reduce the cost of storing `.trie` files in git.
+//! When a word is added in v3, nearly the entire file is changed due to the absolute
+//! references. V4 adds an index sorted by the most frequently used reference to the least.
+//! Because git diff is line based, it is important to add line breaks at logical points.
+//! V3 added line breaks just to make sure the lines were not too long, V4 takes a different
+//! approach. Line breaks are added at two distinct points. First, at the start of each two
+//! letter prefix and second after approximately 50 words have been emitted.
+//!
+//! To improve readability and git diff, at the beginning of each two letter prefix,
+//! a comment is emitted.
+
 // import { opAppend, opConcatMap, opFilter, pipe, reduce } from '@cspell/cspell-pipe/sync';
 //
 // import { trieNodeToRoot } from '../TrieNode/trie-util.js';
@@ -39,6 +30,46 @@ use std::rc::Rc;
 pub struct CspellTrieNode {
     f: bool,
     c: Option<std::collections::HashMap<char, Rc<RefCell<CspellTrieNode>>>>,
+}
+
+pub struct CspellTrieRoot(CspellTrieNode);
+
+impl CspellTrieRoot {
+    pub fn contains(&self, word: &str) -> bool {
+        let mut current_node = &self.0;
+        for c in word.chars() {
+            match current_node.c.as_ref().and_then(|c| c.get(&c)) {
+                Some(node) => current_node = node,
+                None => return false,
+            }
+        }
+        current_node.f
+    }
+
+    pub fn collect_words(
+        &self,
+        node: &CspellTrieNode,
+        prefix: String,
+        words: &mut Vec<String>,
+    ) {
+        if node.f {
+            words.push(prefix.clone());
+        }
+
+        if let Some(ref children) = node.c {
+            for (c, child_node) in children {
+                let mut new_prefix = prefix.clone();
+                new_prefix.push(*c);
+                self.collect_words(child_node.borrow().as_ref(), new_prefix, words);
+            }
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<String> {
+        let mut words = Vec::new();
+        self.collect_words(&self.0, String::new(), &mut words);
+        words
+    }
 }
 
 fn string_to_char_set(values: &str) -> std::collections::HashSet<char> {
@@ -76,24 +107,6 @@ const EOR = ';';
 
 /// Escape the next character
 const ESCAPE = '\\';
-
-// const specialCharacters = stringToCharSet(
-//     [
-//         EOW,
-//         BACK,
-//         EOL,
-//         REF,
-//         REF_REL,
-//         EOR,
-//         ESCAPE,
-//         LF,
-//         REF_INDEX_BEGIN,
-//         REF_INDEX_END,
-//         INLINE_DATA_COMMENT_LINE,
-//         ...'0123456789',
-//         ...'`~!@#$%^&*()_-+=[]{};:\'"<>,./?\\|',
-//     ].join(''),
-// );
 
 fn special_character_map() -> HashSet<char> {
     let mut s = format!("{EOW}{BACK}{EOL}{REF}{REF_REL}{EOR}{ESCAPE}{LF}{REF_INDEX_BEGIN}{REF_INDEX_END}{INLINE_DATA_COMMENT_LINE}");
@@ -403,28 +416,28 @@ struct ReduceResults {
 type Reducer = fn(&mut ReduceResults, &str) -> ReduceResults;
 
 // export function importTrie(linesX: Iterable<string> | string): TrieRoot {
-fn import_trie(lines_x: impl IntoIterator<Item = String>) -> CspellTrieNode {
-//     linesX = typeof linesX === 'string' ? linesX.split(/^/m) : linesX;
-//     let radix = 10;
+fn import_trie(lines_x: impl IntoIterator<Item=String>) -> CspellTrieNode {
+    //     linesX = typeof linesX === 'string' ? linesX.split(/^/m) : linesX;
+    //     let radix = 10;
     let radix = 10;
-//     const comment = /^\s*#/;
+    //     const comment = /^\s*#/;
     let comment = regex::Regex::new(r"^\s*#").unwrap();
-//     const iter = tapIterable(
-//         pipe(
-//             linesX,
-//             opConcatMap((a) => a.split(/^/m)),
-//         ),
-//     );
+    //     const iter = tapIterable(
+    //         pipe(
+    //             linesX,
+    //             opConcatMap((a) => a.split(/^/m)),
+    //         ),
+    //     );
     let iter = lines_x.into_iter();
     // TODO
-//
-//     function parseHeaderRows(headerRows: string[]) {
-//         const header = headerRows.slice(0, 2).join('\n');
-//         const headerReg = /^TrieXv[34]\nbase=(\d+)$/;
-//         /* istanbul ignore if */
-//         if (!headerReg.test(header)) throw new Error('Unknown file format');
-//         radix = Number.parseInt(header.replace(headerReg, '$1'), 10);
-//     }
+    //
+    //     function parseHeaderRows(headerRows: string[]) {
+    //         const header = headerRows.slice(0, 2).join('\n');
+    //         const headerReg = /^TrieXv[34]\nbase=(\d+)$/;
+    //         /* istanbul ignore if */
+    //         if (!headerReg.test(header)) throw new Error('Unknown file format');
+    //         radix = Number.parseInt(header.replace(headerReg, '$1'), 10);
+    //     }
     fn parse_header_rows(header_rows: Vec<String>) {
         let header = header_rows.iter().take(2).collect::<Vec<_>>().join("\n");
         let header_reg = regex::Regex::new(r"^TrieXv[34]\nbase=(\d+)$").unwrap();
@@ -433,17 +446,17 @@ fn import_trie(lines_x: impl IntoIterator<Item = String>) -> CspellTrieNode {
         }
         radix = header.replace(header_reg.as_str(), "$1").parse::<usize>().unwrap();
     }
-//     function readHeader(iter: Iterable<string>) {
-//         const headerRows: string[] = [];
-//         for (const value of iter) {
-//             const line = value.trim();
-//             if (!line || comment.test(line)) continue;
-//             if (line === DATA) break;
-//             headerRows.push(line);
-//         }
-//         parseHeaderRows(headerRows);
-//     }
-    fn read_header(iter: &mut dyn Iterator<Item = String>) {
+    //     function readHeader(iter: Iterable<string>) {
+    //         const headerRows: string[] = [];
+    //         for (const value of iter) {
+    //             const line = value.trim();
+    //             if (!line || comment.test(line)) continue;
+    //             if (line === DATA) break;
+    //             headerRows.push(line);
+    //         }
+    //         parseHeaderRows(headerRows);
+    //     }
+    fn read_header(iter: &mut dyn Iterator<Item=String>) {
         let mut header_rows = Vec::new();
         for value in iter {
             let line = value.trim();
@@ -457,11 +470,11 @@ fn import_trie(lines_x: impl IntoIterator<Item = String>) -> CspellTrieNode {
         }
         parse_header_rows(header_rows);
     }
-//     readHeader(iter);
+    //     readHeader(iter);
     read_header(iter);
-//     const root = parseStream(radix, iter);
+    //     const root = parseStream(radix, iter);
     let root = parse_stream(radix, iter);
-//     return root;
+    //     return root;
     root
 }
 //
@@ -471,7 +484,7 @@ fn numbers_set() -> HashSet<char> {
 }
 //
 // function parseStream(radix: number, iter: Iterable<string>): TrieRoot {
-fn parse_stream(radix: usize, iter: impl IntoIterator<Item = String>) -> CspellTrieNode {
+fn parse_stream(radix: usize, iter: impl IntoIterator<Item=String>) -> CspellTrieRoot {
     //     const eow: TrieNode = Object.freeze({ f: 1 });
     let eow = CspellTrieNode {
         f: true,
@@ -778,7 +791,7 @@ fn parse_stream(radix: usize, iter: impl IntoIterator<Item = String>) -> CspellT
     parsers.insert(EOL.to_string(), parse_ignore);
     parsers.insert(LF.to_string(), parse_ignore);
     parsers.insert(INLINE_DATA_COMMENT_LINE.to_string(), parse_comment);
-    //
+
     //     function parserMain(acc: ReduceResults, s: string): ReduceResults {
     //         const parser = acc.parser ?? parsers[s] ?? parseCharacter;
     //         return parser(acc, s);
@@ -789,10 +802,10 @@ fn parse_stream(radix: usize, iter: impl IntoIterator<Item = String>) -> CspellT
         });
         parser(acc, s)
     }
-    //
+
     //     const charsetSpaces = stringToCharSet(' \r\n\t');
     let charset_spaces = string_to_char_set(" \r\n\t");
-    //
+
     //     function parseReferenceIndex(acc: ReduceResults, s: string): ReduceResults {
     //         let json = '';
     //
@@ -851,7 +864,6 @@ fn parse_stream(radix: usize, iter: impl IntoIterator<Item = String>) -> CspellT
         parser_start(acc, s)
     }
 
-    //
     //     reduce(
     //         pipe(
     //             iter,
@@ -893,7 +905,7 @@ fn parse_stream(radix: usize, iter: impl IntoIterator<Item = String>) -> CspellT
             }
         }
     }
-    root
+    CspellTrieRoot(root)
 }
 
 // function stringToCharSet(values: string): Record<string, boolean | undefined> {
@@ -970,6 +982,116 @@ fn create_string_lookup_map<T>(values: &[(String, T)]) -> HashMap<String, T> {
 //         [Symbol.iterator]: iterableFn,
 //     };
 // }
-fn tap_iterable<T>(iterable: impl IntoIterator<Item = T>) -> impl Iterator<Item = T> {
+fn tap_iterable<T>(iterable: impl IntoIterator<Item=T>) -> impl Iterator<Item=T> {
     iterable.into_iter()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // #[test]
+    // fn test_parse_header() {
+    //     let input = vec![
+    //         "TrieXv4".to_string(),
+    //         "base=10".to_string(),
+    //         "__DATA__".to_string(),
+    //     ];
+    //     let (counter, header) = parse_stream(&input).unwrap();
+    //     assert_eq!(counter, 3);
+    //     assert_eq!(header.version.to_u8(), 4);
+    //     assert_eq!(header.base, 10);
+    // }
+
+    #[test]
+    fn test_parse_body_word_end() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 10,
+        };
+        let input = vec!["a$".to_string(), "b$".to_string(), "c$".to_string()];
+        let trie = parse_stream(10, &input);
+        assert!(trie.contains("a"));
+        assert!(trie.contains("b"));
+        assert!(trie.contains("c"));
+        assert!(!trie.contains("d"));
+        assert!(!trie.contains("ab"));
+        assert!(!trie.contains("abc"));
+    }
+
+    #[test]
+    fn test_parse_body_escape() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 10,
+        };
+        let input = vec![
+            "a\\$".to_string(),
+            "b$".to_string(),
+            "c$".to_string(),
+            "<2def$".to_string(),
+        ];
+        let trie = parse_body(&input, &header);
+        assert!(!trie.contains("a"));
+        assert!(trie.contains("a$b"));
+        assert!(trie.contains("a$c"));
+        assert!(trie.contains("def"));
+    }
+
+    #[test]
+    fn test_parse_body_remove() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 10,
+        };
+        let input = vec!["a$word$<3no$".to_string()];
+        let trie = parse_body(&input, &header);
+        let mut v = trie.to_vec();
+        v.sort();
+        assert_eq!(v, vec!["a", "no", "word"]);
+    }
+
+    #[test]
+    fn test_parse_body_absolute_reference() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 10,
+        };
+        let input = vec!["apple$<<<n$<banb#1;".to_string()];
+        let trie = parse_body(&input, &header);
+        let mut v = trie.to_vec();
+        v.sort();
+        assert_eq!(v, vec!["an", "apple", "banbn", "banbpple"]);
+    }
+
+    #[test]
+    fn test_parse_body_absolute_reference_2() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 32,
+        };
+        let input = vec![r"\'cause$5sup$3tis$2wa#9;<4\0th$2$".to_string()];
+        let trie = parse_body(&input, &header);
+        let mut v = trie.to_vec();
+        v.sort();
+        assert_eq!(v, vec!["0", "0th", "'cause", "'sup", "'tis", "'twas"]);
+    }
+
+    #[test]
+    fn test_parse_body_absolute_reference_3() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 32,
+        };
+        let input = vec![r"\'cause$5sup$3tis$2wa#9;<4\0th$2$\1st$2$\2nd$2$\3r#g;".to_string()];
+        let trie = parse_body(&input, &header);
+        let mut v = trie.to_vec();
+        v.sort();
+        assert_eq!(
+            v,
+            vec![
+                "'cause", "'sup", "'tis", "'twas", "0", "0th", "1", "1st", "2", "2nd", "3rd"
+            ]
+        );
+    }
 }
