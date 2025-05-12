@@ -67,7 +67,7 @@ cargo-csc cache <SUBCOMMAND>
 ```
 
 #### Subcommands:
-- `build`: Compile the wordlists into a cache (not implemented yet).
+- `build`: Compile the wordlists into a cache (not implemented yet, caching happens on the fly).
 - `clear`: Clear the cached wordlists.
 
 ### **Install**
