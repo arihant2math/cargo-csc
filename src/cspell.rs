@@ -10,7 +10,7 @@ use anyhow::Context;
 use git2::Repository;
 use std::{fs, io::Write};
 
-const URL: &str = "https://github.com/streetsidesoftware/cspell-dicts";
+const URL: &str = "https://github.com/arihant2math/cspell-dicts";
 
 pub fn import() -> anyhow::Result<()> {
     let repo_path = tmp_path().join("cspell-dicts");
