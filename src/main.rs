@@ -33,8 +33,8 @@ pub use trie::Trie;
 
 use crate::args::{ContextArgs, OutputFormat, TraceArgs};
 
-type HashSet<T> = ahash::HashSet<T>;
-type HashMap<K, V> = ahash::HashMap<K, V>;
+pub type HashSet<T> = ahash::HashSet<T>;
+pub type HashMap<K, V> = ahash::HashMap<K, V>;
 
 pub struct CheckContext {
     pub dictionaries: HashMap<String, Trie>,
