@@ -4,7 +4,7 @@ pub use trie::CspellTrie;
 
 use crate::{
     dictionary,
-    filesystem::{store_path, tmp_path},
+    filesystem::{cspell_path, store_path},
 };
 use anyhow::Context;
 use git2::Repository;
@@ -13,7 +13,7 @@ use std::{fs, io::Write};
 const URL: &str = "https://github.com/arihant2math/cspell-dicts";
 
 pub fn import() -> anyhow::Result<()> {
-    let repo_path = tmp_path().join("cspell-dicts");
+    let repo_path = cspell_path().join("cspell-dicts");
     if !repo_path.exists() {
         fs::create_dir_all(&repo_path).context(format!(
             "Failed to create temporary directory: {}",
@@ -51,20 +51,31 @@ pub fn import() -> anyhow::Result<()> {
         let entry = entry?;
         let dict_dir = entry.path();
         let dict_subdir = dict_dir.join("dict");
-        if !dict_subdir.exists() {
-            continue;
-        }
 
         // collect just the file-names (e.g. "ada.txt"), not full paths
         let mut files = Vec::new();
-        for file_entry in fs::read_dir(&dict_subdir)? {
+        if dict_subdir.exists() {
+            for file_entry in fs::read_dir(&dict_subdir)? {
+                let file_entry = file_entry?;
+                let p = file_entry.path();
+                if let Some(fname) = p.file_name().and_then(|s| s.to_str()) {
+                    if glob::Pattern::new("*.txt")?.matches(fname) {
+                        files.push(p.canonicalize()?);
+                    }
+                }
+            }
+        }
+        for file_entry in fs::read_dir(&dict_dir)? {
             let file_entry = file_entry?;
             let p = file_entry.path();
             if let Some(fname) = p.file_name().and_then(|s| s.to_str()) {
-                if glob::Pattern::new("*.txt")?.matches(fname) {
-                    files.push(fname.to_string());
+                if glob::Pattern::new("*.trie")?.matches(fname) {
+                    files.push(p.canonicalize()?);
                 }
             }
+        }
+        if files.is_empty() {
+            continue;
         }
 
         let store = store_path().join(format!(
@@ -86,8 +97,12 @@ pub fn import() -> anyhow::Result<()> {
             no_cache: false,
         };
 
-        for file_name in files {
-            let src = dict_subdir.join(&file_name);
+        for src in files {
+            let file_name = src
+                .file_name()
+                .ok_or_else(|| anyhow::anyhow!("Failed to get file name"))?
+                .to_string_lossy()
+                .into_owned();
             let dst = store.join(&file_name);
             fs::copy(&src, &dst).context(format!(
                 "Failed to copy file from {} to {}",

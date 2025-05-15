@@ -1,9 +1,9 @@
-use std::{collections::HashMap, path::PathBuf};
-
+use ahash::HashMapExt;
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-use crate::{Trie, filesystem, store_path};
+use crate::{HashMap, Trie, filesystem, store_path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {
@@ -104,7 +104,7 @@ impl DictCacheStore {
         if data.is_err() {
             return Ok(Self::new());
         }
-        let data = data.unwrap();
+        let data = data?;
         let store: Self = serde_hjson::from_slice(&data).unwrap_or_default();
 
         Ok(store)
@@ -293,7 +293,7 @@ impl Dictionary {
                 if let Some(cache) = self.load_from_cache(path)? {
                     return Ok(cache);
                 }
-            },
+            }
         }
         match self {
             Dictionary::File(path) => {
@@ -307,7 +307,7 @@ impl Dictionary {
             }
             Dictionary::Custom { definition, root } => {
                 let mut rules = vec![];
-                let path = root.join(&definition.path);
+                let path = root.join(&definition.path());
                 if !path.exists() {
                     return Err(anyhow::anyhow!(
                         "Custom dictionary file does not exist: {}",

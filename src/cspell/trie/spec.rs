@@ -260,17 +260,18 @@ impl TrieNode {
 
 /// Recursively convert the builder trie into the output Trie structure.
 fn convert_trie(builder_root: Rc<RefCell<TrieNode>>) -> Trie {
-    fn rec_convert(node: &Rc<RefCell<TrieNode>>) -> crate::trie::TrieNode {
-        let node_ref = node.borrow();
-        let mut out = if node_ref.eow {
-            crate::trie::TrieNode::some_default()
-        } else {
-            crate::trie::TrieNode::none()
-        };
-        for (ch, child) in &node_ref.children {
-            out.children.insert(*ch, rec_convert(child));
-        }
-        out
+    fn rec_convert(node: &Rc<RefCell<TrieNode>>) -> fst::map::Map<Vec<u8>> {
+        // let node_ref = node.borrow();
+        // let mut out = if node_ref.eow {
+        //     crate::trie::TrieNode::some_default()
+        // } else {
+        //     crate::trie::TrieNode::none()
+        // };
+        // for (ch, child) in &node_ref.children {
+        //     out.children.insert(*ch, rec_convert(child));
+        // }
+        // out
+        todo!()
     }
     let root_converted = rec_convert(&builder_root);
     Trie {

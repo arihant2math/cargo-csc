@@ -1,8 +1,8 @@
 use anyhow::{Context, bail};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use args::{CacheCommand, CheckArgs, CliArgs};
+use clap::Parser;
 use dashmap::DashMap;
 use std::{
-    collections::HashMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -13,6 +13,7 @@ use std::{
 use tokio::{sync::Mutex, task, time::Instant};
 use url::Url;
 
+mod args;
 mod code;
 mod cspell;
 mod dictionary;
@@ -22,6 +23,7 @@ mod multi_trie;
 mod settings;
 mod trie;
 
+use crate::args::{ContextArgs, OutputFormat, TraceArgs};
 pub use code::{Typo, get_code, handle_node};
 pub use dictionary::Dictionary;
 pub use filesystem::{cache_path, store_path};
@@ -29,67 +31,8 @@ pub use multi_trie::MultiTrie;
 pub use settings::Settings;
 pub use trie::Trie;
 
-#[derive(Clone, Debug, ValueEnum)]
-pub enum OutputFormat {
-    /// JSON output
-    Json,
-    /// Text output
-    Text,
-}
-
-#[derive(Clone, Debug, Args)]
-pub struct CheckArgs {
-    /// The path to the folder to search
-    dir: PathBuf,
-    glob: Option<String>,
-    /// Verbose output
-    #[clap(short, long, default_value_t = false)]
-    verbose: bool,
-    #[clap(short, long, default_value_t = false)]
-    progress: bool,
-    /// Which files/folders to exclude from the search
-    #[clap(long)]
-    exclude: Vec<String>,
-    #[clap(long)]
-    extra_dictionaries: Vec<String>,
-    #[clap(long)]
-    max_depth: Option<usize>,
-    #[clap(long, default_value_t = false)]
-    follow_symlinks: bool,
-    #[clap(long)]
-    max_filesize: Option<u64>,
-    #[clap(short, long)]
-    jobs: Option<usize>,
-    #[clap(long)]
-    settings: Option<PathBuf>,
-    #[clap(long)]
-    output: Option<OutputFormat>,
-}
-
-#[derive(Clone, Debug, Args)]
-pub struct InstallArgs {
-    uri: String,
-}
-
-#[derive(Clone, Debug, Subcommand)]
-pub enum CacheCommand {
-    /// Compile the wordlists
-    Build,
-    /// Clear the cache
-    Clear,
-}
-
-#[derive(Parser, Debug)]
-#[clap(author, version, about)]
-pub enum CliArgs {
-    /// Check for typos
-    Check(CheckArgs),
-    #[command(subcommand)]
-    Cache(CacheCommand),
-    Install(InstallArgs),
-    /// Import cspell dictionaries
-    ImportCspell,
-}
+type HashSet<T> = ahash::HashSet<T>;
+type HashMap<K, V> = ahash::HashMap<K, V>;
 
 pub struct CheckContext {
     pub dictionaries: HashMap<String, Trie>,
@@ -97,18 +40,18 @@ pub struct CheckContext {
 }
 
 struct MergedSettings {
-    args: CheckArgs,
+    args: Box<dyn ContextArgs + Send + Sync>,
     settings: Settings,
 }
 
 impl MergedSettings {
-    fn new(args: CheckArgs, settings: Settings) -> Self {
+    fn new(args: Box<dyn ContextArgs + Send + Sync>, settings: Settings) -> Self {
         Self { args, settings }
     }
 
     fn root_path(&self) -> PathBuf {
-        if self.args.dir.is_absolute() {
-            self.args.dir.clone()
+        if self.args.dir().is_absolute() {
+            self.args.dir().clone()
         } else {
             std::env::current_dir().unwrap()
         }
@@ -116,9 +59,9 @@ impl MergedSettings {
 
     fn dictionaries(&self) -> Vec<Dictionary> {
         let mut dictionaries = Vec::with_capacity(
-            self.args.extra_dictionaries.len() + self.settings.dictionary_definitions.len(),
+            self.args.extra_dictionaries().len() + self.settings.dictionary_definitions.len(),
         );
-        for extra in &self.args.extra_dictionaries {
+        for extra in &self.args.extra_dictionaries() {
             if let Ok(dictionary) = Dictionary::new_with_path(PathBuf::from(extra)) {
                 dictionaries.push(dictionary);
             }
@@ -146,27 +89,33 @@ impl MergedSettings {
     }
 
     fn base_dictionaries(&self) -> Vec<String> {
-        let mut dictionaries = self.settings.dictionaries.clone();
-        dictionaries.extend(self.args.extra_dictionaries.clone());
+        let mut dictionaries = self
+            .settings
+            .dictionaries
+            .clone()
+            .into_iter()
+            .map(|s| s.name())
+            .collect::<Vec<_>>();
+        dictionaries.extend(self.args.extra_dictionaries().clone());
         dictionaries
     }
 
     fn verbose(&self) -> bool {
-        self.args.verbose
+        self.args.verbose()
     }
 
     fn jobs(&self) -> usize {
-        self.args.jobs.unwrap_or_else(num_cpus::get)
+        self.args.jobs().unwrap_or_else(num_cpus::get)
     }
 }
 
-struct SharedCheckContext {
+struct SharedRuntimeContext {
     // None means the dictionary is not loaded
     dictionaries: DashMap<String, Arc<Trie>>,
     settings: MergedSettings,
 }
 
-impl SharedCheckContext {
+impl SharedRuntimeContext {
     fn new(settings: MergedSettings) -> Self {
         let dictionaries = DashMap::new();
         Self {
@@ -194,9 +143,14 @@ struct CheckFileResult {
     typos: Vec<Typo>,
 }
 
-fn get_multi_trie(path: &Path, context: Arc<SharedCheckContext>) -> anyhow::Result<MultiTrie> {
-    if path.is_dir() {
-        bail!("Path is a directory: {}", path.display());
+fn get_multi_trie<P: AsRef<Path>>(
+    path: Option<P>,
+    context: Arc<SharedRuntimeContext>,
+) -> anyhow::Result<MultiTrie> {
+    if let Some(ref path) = path {
+        if path.as_ref().is_dir() {
+            bail!("Path is a directory: {}", path.as_ref().display());
+        }
     }
     let mut trie = MultiTrie::new();
     let tries = context.get_base_dictionaries().clone();
@@ -215,7 +169,7 @@ fn get_multi_trie(path: &Path, context: Arc<SharedCheckContext>) -> anyhow::Resu
 
 #[tokio::main]
 async fn handle_file(
-    context: Arc<SharedCheckContext>,
+    context: Arc<SharedRuntimeContext>,
     file_receiver: Arc<Mutex<tokio::sync::mpsc::Receiver<PathBuf>>>,
     result_sender: tokio::sync::mpsc::Sender<CheckFileResult>,
 ) -> anyhow::Result<()> {
@@ -233,13 +187,13 @@ async fn handle_file(
             .await
             .context(format!("Failed to get code for file: {}", file.display()))?;
 
-        let dict = get_multi_trie(&file, context.clone()).context(format!(
+        let dict = get_multi_trie(Some(&file), context.clone()).context(format!(
             "Failed to load dictionary set for file: {}",
             file.display()
         ))?;
         let tree = parser.parse(&source_code, None).unwrap();
         let root_node = Box::new(tree.root_node());
-        let typos = handle_node(&dict, &root_node, &source_code);
+        let typos = handle_node(&dict, &root_node, source_code.into());
         let result = CheckFileResult {
             file: file.clone(),
             typos,
@@ -255,45 +209,42 @@ async fn handle_file(
     Ok(())
 }
 
-async fn check(args: CheckArgs) -> anyhow::Result<()> {
-    let settings = settings::Settings::load(args.settings.clone().map(|p| p.display().to_string()));
-    // Generate context
-    let context = Arc::new(SharedCheckContext::new(MergedSettings::new(args, settings)));
-    let dictionary_loader = task::spawn_blocking({
-        let context = context.clone();
-        move || {
-            let c = context.get_dictionaries();
-            let base_dictionaries = context.get_base_dictionaries();
-            for dict in c {
-                let names = dict.get_names()?;
-                if !base_dictionaries.iter().any(|x| names.contains(x)) {
-                    // Don't load pointless tries
-                    continue;
-                }
-                let trie = Arc::new(dict.compile()?);
-                for name in names {
-                    // TODO: handle overwrites
-                    context.dictionaries.insert(name.clone(), trie.clone());
-                }
-            }
-            Ok::<(), anyhow::Error>(())
+fn load_dictionaries(context: Arc<SharedRuntimeContext>) -> anyhow::Result<()> {
+    let c = context.get_dictionaries();
+    let base_dictionaries = context.get_base_dictionaries();
+    for dict in c {
+        let names = dict.get_names()?;
+        if !base_dictionaries.iter().any(|x| names.contains(x)) {
+            // Don't load pointless tries
+            continue;
         }
-    });
+        let trie = Arc::new(dict.compile()?);
+        for name in names {
+            // TODO: handle overwrites
+            context.dictionaries.insert(name.clone(), trie.clone());
+        }
+    }
+    Ok(())
+}
+
+async fn check(args: CheckArgs) -> anyhow::Result<()> {
+    let settings = Settings::load(args.settings.clone().map(|p| p.display().to_string()));
+    // Generate context
+    let context = Arc::new(SharedRuntimeContext::new(MergedSettings::new(
+        Box::new(args.clone()),
+        settings,
+    )));
+    let load_dictionaries_context = context.clone();
+    let dictionary_loader = task::spawn_blocking(|| load_dictionaries(load_dictionaries_context));
     let (file_sender, file_receiver) = tokio::sync::mpsc::channel(256);
     let file_loader = task::spawn({
         let context = context.clone();
+        let glob = args.glob.clone();
         async move {
             // Find files, also send them to file_sender
-            let pattern = glob::Pattern::new(
-                context
-                    .settings
-                    .args
-                    .glob
-                    .as_ref()
-                    .unwrap_or(&"**/*.*".to_string()),
-            )
-            .unwrap();
-            let walker = ignore::WalkBuilder::new(context.settings.args.dir.clone()).build();
+            let pattern =
+                glob::Pattern::new(glob.as_ref().unwrap_or(&"**/*.*".to_string())).unwrap();
+            let walker = ignore::WalkBuilder::new(context.settings.args.dir().clone()).build();
             let mut files = vec![];
             for file in walker {
                 if let Ok(file) = file {
@@ -337,7 +288,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     let output = context
         .settings
         .args
-        .output
+        .output()
         .clone()
         .unwrap_or(OutputFormat::Text);
     if matches!(&output, OutputFormat::Json) {
@@ -345,7 +296,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     }
     while let Some(result) = result_receiver.recv().await {
         counter += 1;
-        if context.settings.verbose() || context.settings.args.progress {
+        if context.settings.verbose() || args.progress {
             if result.typos.is_empty() {
                 println!(
                     "[{counter}/{total_files}] {file}: No typos found",
@@ -365,13 +316,9 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
             }
         }
         for typo in &result.typos {
-            eprintln!(
-                "{file}:{line}:{column}: Unknown word {word}",
-                file = result.file.display(),
-                line = typo.line,
-                column = typo.column,
-                word = typo.word
-            );
+            let diagnostic: miette::Report =
+                typo.to_diagnostic(result.file.display().to_string()).into();
+            println!("{diagnostic:?}");
         }
     }
 
@@ -396,6 +343,30 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     }
     for thread in threads {
         thread.join().unwrap()?;
+    }
+    Ok(())
+}
+
+async fn trace(args: TraceArgs) -> anyhow::Result<()> {
+    let settings = Settings::load(args.settings.clone().map(|p| p.display().to_string()));
+    // Generate context
+    let context = Arc::new(SharedRuntimeContext::new(MergedSettings::new(
+        Box::new(args.clone()),
+        settings,
+    )));
+    let load_dictionaries_context = context.clone();
+    load_dictionaries(load_dictionaries_context)?;
+    let mut found = false;
+    for kv in context.dictionaries.iter() {
+        let name = kv.key();
+        let dict = kv.value();
+        if dict.contains(&args.word) {
+            println!("Found \'{}\' in dictionary {}", args.word, name);
+            found = true;
+        }
+    }
+    if !found {
+        println!("Did not find \'{}\' in any dictionary", args.word);
     }
     Ok(())
 }
@@ -427,6 +398,9 @@ async fn main() -> anyhow::Result<()> {
     match args {
         CliArgs::Check(args) => {
             check(args).await?;
+        }
+        CliArgs::Trace(args) => {
+            trace(args).await?;
         }
         CliArgs::Cache(args) => {
             cache(args).await?;

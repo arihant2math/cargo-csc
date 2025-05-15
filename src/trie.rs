@@ -1,66 +1,66 @@
-use std::collections::HashMap;
-
-use bincode::{Decode, Encode};
+use std::fmt::Debug;
 
 use crate::dictionary::{Command, Rule};
+use bincode::{Decode, Encode};
+use fst::{IntoStreamer, automaton::Levenshtein};
 
-#[derive(Clone, Debug, Encode, Decode)]
-pub struct TrieData {
-    pub disallow: bool,
+#[derive(Clone, Encode, Decode)]
+struct TrieRepr {
+    trie: Vec<u8>,
+    options: TrieOptions,
 }
 
-impl Default for TrieData {
-    fn default() -> Self {
-        TrieData { disallow: false }
-    }
-}
-
-#[derive(Clone, Default, Debug, Encode, Decode)]
-pub struct TrieNode {
-    pub data: Option<TrieData>,
-    pub children: HashMap<char, TrieNode>,
-}
-
-impl TrieNode {
-    pub fn none() -> Self {
-        TrieNode {
-            data: None,
-            children: HashMap::new(),
-        }
-    }
-
-    pub fn some_default() -> Self {
-        TrieNode {
-            data: Some(TrieData::default()),
-            children: HashMap::new(),
-        }
-    }
-}
-
-#[derive(Clone, Default, Debug, Encode, Decode)]
+#[derive(Clone)]
 pub struct Trie {
-    pub root: TrieNode,
+    pub root: fst::map::Map<Vec<u8>>,
     pub options: TrieOptions,
+}
+
+impl Debug for Trie {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Trie")
+            .field("root", &"Elided")
+            .field("options", &self.options)
+            .finish()
+    }
+}
+
+impl Default for Trie {
+    fn default() -> Self {
+        Trie {
+            root: fst::map::Map::from_iter::<&str, Vec<(&str, u64)>>(vec![]).unwrap(),
+            options: TrieOptions::default(),
+        }
+    }
 }
 
 impl Trie {
     pub fn new() -> Self {
         Trie {
-            root: TrieNode::default(),
             options: TrieOptions::new(),
+            ..Default::default()
         }
     }
 
-    pub(crate) fn set_root(&mut self, root: TrieNode) {
-        self.root = root;
-    }
-
     pub fn dump(&self) -> anyhow::Result<Vec<u8>> {
-        Ok(bincode::encode_to_vec(self, bincode::config::standard())?)
+        let trie_repr = TrieRepr {
+            trie: self.root.clone().into_fst().to_vec(),
+            options: self.options.clone(),
+        };
+        Ok(bincode::encode_to_vec(
+            trie_repr,
+            bincode::config::standard(),
+        )?)
     }
 
     pub fn load(data: &[u8]) -> anyhow::Result<Self> {
-        Ok(bincode::decode_from_slice(data, bincode::config::standard()).map(|(trie, _)| trie)?)
+        let (trie_repr, _): (TrieRepr, _) =
+            bincode::decode_from_slice(data, bincode::config::standard())?;
+        let root = fst::map::Map::new(trie_repr.trie)?;
+        Ok(Self {
+            root,
+            options: trie_repr.options,
+        })
     }
 
     pub fn dump_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> anyhow::Result<()> {
@@ -74,54 +74,25 @@ impl Trie {
         Trie::load(&data)
     }
 
-    /// Inserts a word into the trie.
-    /// If the word already exists, it will be replaced.
-    pub fn insert(&mut self, word: &str, data: TrieData) {
-        let mut current_node = &mut self.root;
-
-        for c in word.chars() {
-            current_node = current_node.children.entry(c).or_default();
-        }
-        current_node.data = Some(data);
-    }
-
     pub fn contains(&self, word: &str) -> bool {
-        let mut current_node = &self.root;
-
-        for c in word.chars() {
-            // TODO: handle case sensitivity
-            match current_node.children.get(&c) {
-                Some(node) => current_node = node,
-                None => return false,
-            }
-        }
-
-        if let Some(ref data) = current_node.data {
-            // TODO: handle disallow properly
-            !data.disallow
-        } else {
-            false
-        }
-    }
-
-    fn collect_words(&self, node: &TrieNode, prefix: String, words: &mut Vec<String>) {
-        if let Some(ref data) = node.data {
-            if !data.disallow {
-                words.push(prefix.clone());
-            }
-        }
-
-        for (c, child_node) in &node.children {
-            let mut new_prefix = prefix.clone();
-            new_prefix.push(*c);
-            self.collect_words(child_node, new_prefix, words);
-        }
+        self.root.contains_key(word)
     }
 
     pub fn to_vec(&self) -> Vec<String> {
-        let mut words = Vec::new();
-        self.collect_words(&self.root, String::new(), &mut words);
+        let words = self.root.stream().into_str_keys().unwrap();
         words
+    }
+
+    pub fn check(&self, word: &str) -> anyhow::Result<Option<String>> {
+        let lev = Levenshtein::new(word, 1)?;
+        let stream = self.root.search(lev).into_stream();
+        let mut keys = stream.into_str_keys()?;
+        keys.sort_by(|s, t| {
+            let score1 = strsim::normalized_damerau_levenshtein(word, s);
+            let score2 = strsim::normalized_damerau_levenshtein(word, t);
+            score1.total_cmp(&score2)
+        });
+        Ok(keys.last().cloned())
     }
 }
 
@@ -155,21 +126,27 @@ impl TrieOptions {
 
 impl From<&[Rule]> for Trie {
     fn from(rules: &[Rule]) -> Self {
-        let mut trie = Trie::new();
+        let mut trie = Vec::new();
+        let mut options = TrieOptions::default();
         for rule in rules {
             match rule {
                 Rule::Allow(word) => {
-                    trie.insert(word, TrieData::default());
+                    trie.push((word, 0));
                 }
                 Rule::Disallow(word) => {
-                    trie.insert(word, TrieData { disallow: true });
+                    trie.push((word, 1));
                 }
                 Rule::Command(command) => {
-                    trie.options.add_command(command);
+                    options.add_command(command);
                 }
                 _ => {}
             }
         }
-        trie
+        trie.sort_by_key(|(word, _)| word.to_string());
+        trie.dedup();
+        Trie {
+            root: fst::map::Map::from_iter(trie).unwrap(),
+            options,
+        }
     }
 }

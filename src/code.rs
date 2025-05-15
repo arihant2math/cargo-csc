@@ -1,6 +1,12 @@
 use anyhow::bail;
-use std::path::PathBuf;
+use miette::{Diagnostic, NamedSource, SourceOffset, SourceSpan};
+use std::{
+    fmt::{Debug, Display, Formatter},
+    path::PathBuf,
+    sync::Arc,
+};
 use tokio::{fs::File, io, io::AsyncReadExt};
+use tree_sitter::Node;
 
 pub async fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Parser)> {
     let file = File::open(path).await?;
@@ -39,6 +45,12 @@ pub async fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Pa
         "toml" => {
             parser.set_language(&tree_sitter_toml_ng::LANGUAGE.into())?;
         }
+        "ts" => {
+            parser.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())?;
+        }
+        "tsx" => {
+            parser.set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())?;
+        }
         e => {
             bail!("Unsupported file type: {}", e);
         }
@@ -46,33 +58,25 @@ pub async fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Pa
     Ok((source_code, parser))
 }
 
-pub fn handle_node(
-    words: &crate::MultiTrie,
-    node: &tree_sitter::Node,
-    source_code: &str,
-) -> Vec<Typo> {
+pub fn handle_node(words: &crate::MultiTrie, node: &Node, source_code: Arc<str>) -> Vec<Typo> {
     let start_byte = node.start_byte();
     let end_byte = node.end_byte();
     let text = &source_code[start_byte..end_byte];
     let mut typos = Vec::new();
-    if node.is_named() {
+    if node.is_named() && node.child_count() == 0 {
         for word in text.split_whitespace() {
             if word.len() > 1 {
                 if let Some(typo) = words.handle_identifier(word) {
-                    let line = node.start_position().row + 1;
-                    let column = node.start_position().column + 1;
-                    let typo = Typo {
-                        line,
-                        column,
-                        word: typo,
-                    };
+                    // TODO: Fix
+                    // let suggestion = words.suggestion(&typo);
+                    let typo = Typo::new(typo, node.clone(), source_code.clone(), None);
                     typos.push(typo);
                 }
             }
         }
     }
     for child in node.children(&mut node.walk()) {
-        typos.append(&mut handle_node(words, &child, source_code));
+        typos.append(&mut handle_node(words, &child, source_code.clone()));
     }
     typos
 }
@@ -81,5 +85,77 @@ pub fn handle_node(
 pub struct Typo {
     pub line: usize,
     pub column: usize,
+    pub length: usize,
     pub word: String,
+    pub suggestion: Option<String>,
+    pub source: Arc<str>,
 }
+
+impl Typo {
+    fn new(word: String, node: Node, source_code: Arc<str>, suggestion: Option<String>) -> Self {
+        let start_byte = node.start_byte();
+        let end_byte = node.end_byte();
+        let line = node.start_position().row + 1;
+        let column = node.start_position().column + 1;
+        let length = end_byte - start_byte;
+        Typo {
+            line,
+            column,
+            length,
+            word,
+            source: source_code,
+            suggestion,
+        }
+    }
+
+    pub fn new_with_suggestion(
+        word: String,
+        node: Node,
+        source_code: Arc<str>,
+        suggestion: String,
+    ) -> Self {
+        Self::new(word, node, source_code, Some(suggestion))
+    }
+
+    pub fn new_without_suggestion(word: String, node: Node, source_code: Arc<str>) -> Self {
+        Self::new(word, node, source_code, None)
+    }
+
+    pub fn to_diagnostic(&self, file: String) -> TypoDiagnostic {
+        let offset = SourceOffset::from_location(self.source.clone(), self.line, self.column);
+        let span = SourceSpan::new(offset, self.length);
+        let suggestion_text = match self.suggestion {
+            Some(ref suggestion) => format!(" Did you mean `{}`?", suggestion),
+            None => String::new(),
+        };
+        TypoDiagnostic {
+            src: NamedSource::new(&file, self.source.clone()),
+            typo_span: span,
+            advice: format!("Unknown word `{}`.{}", self.word, suggestion_text),
+        }
+    }
+}
+
+#[derive(Clone, Diagnostic)]
+pub struct TypoDiagnostic {
+    #[source_code]
+    src: NamedSource<Arc<str>>,
+    #[label = "Typo here"]
+    typo_span: SourceSpan,
+    #[help]
+    advice: String,
+}
+
+impl Debug for TypoDiagnostic {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TypoDiagnostic",)
+    }
+}
+
+impl Display for TypoDiagnostic {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for TypoDiagnostic {}

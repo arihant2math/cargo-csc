@@ -20,7 +20,7 @@
 // import { bufferLines } from '../utils/bufferLines.js';
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use crate::{HashMap, HashSet};
 use std::rc::Rc;
 
 // export interface TrieNode {
@@ -29,7 +29,7 @@ use std::rc::Rc;
 // }
 pub struct CspellTrieNode {
     f: bool,
-    c: Option<std::collections::HashMap<char, Rc<RefCell<CspellTrieNode>>>>,
+    c: Option<HashMap<char, Rc<RefCell<CspellTrieNode>>>>,
 }
 
 pub struct CspellTrieRoot(CspellTrieNode);

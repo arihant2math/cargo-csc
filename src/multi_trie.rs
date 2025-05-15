@@ -1,14 +1,18 @@
 use crate::Trie;
-use std::sync::Arc;
+use std::{cell::OnceCell, sync::Arc};
 
 #[derive(Debug, Default)]
 pub struct MultiTrie {
     pub inner: Vec<Arc<Trie>>,
+    pub all_words: OnceCell<Vec<String>>,
 }
 
 impl MultiTrie {
     pub fn new() -> Self {
-        MultiTrie { inner: Vec::new() }
+        MultiTrie {
+            inner: Vec::new(),
+            all_words: OnceCell::new(),
+        }
     }
 
     pub fn contains(&self, word: &str) -> bool {
@@ -67,5 +71,25 @@ impl MultiTrie {
             .filter(|part| part.len() > 3)
             .collect::<Vec<_>>();
         self.check_parts(&parts)
+    }
+
+    pub fn suggestion(&self, word: &str) -> Option<String> {
+        const THRESHOLD: f64 = 0.7;
+
+        let (score, best_suggestion) = self
+            .inner
+            .iter()
+            .map(|t| t.check(word).unwrap())
+            .filter_map(|c| c)
+            .filter_map(|suggestion| {
+                let score = strsim::normalized_damerau_levenshtein(word, &suggestion);
+                Some((score, suggestion.clone()))
+            })
+            .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))?;
+        if score > THRESHOLD {
+            Some(best_suggestion)
+        } else {
+            None
+        }
     }
 }
