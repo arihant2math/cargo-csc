@@ -1,9 +1,10 @@
-use git2::Repository;
 use std::{
     cell::RefCell,
     io::Write,
     path::{Path, PathBuf},
 };
+
+use git2::Repository;
 
 struct State {
     progress: Option<git2::Progress<'static>>,
@@ -169,9 +170,9 @@ fn fast_forward(
     repo.set_head(&name)?;
     repo.checkout_head(Some(
         git2::build::CheckoutBuilder::default()
-            // For some reason the force is required to make the working directory actually get updated
-            // I suspect we should be adding some logic to handle dirty working directory states
-            // but this is just an example so maybe not.
+            // For some reason the force is required to make the working directory actually get
+            // updated I suspect we should be adding some logic to handle dirty working
+            // directory states but this is just an example so maybe not.
             .force(),
     ))?;
     Ok(())

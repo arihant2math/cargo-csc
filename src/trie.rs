@@ -1,8 +1,9 @@
 use std::fmt::Debug;
 
-use crate::dictionary::{Command, Rule};
 use bincode::{Decode, Encode};
 use fst::{IntoStreamer, automaton::Levenshtein};
+
+use crate::dictionary::{Command, Rule};
 
 #[derive(Clone, Encode, Decode)]
 struct TrieRepr {

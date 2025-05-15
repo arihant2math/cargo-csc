@@ -1,8 +1,10 @@
-use crate::filesystem::git_path;
+use std::{fs, path::PathBuf};
+
 use anyhow::Context;
 use git2::Repository;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+
+use crate::filesystem::git_path;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]

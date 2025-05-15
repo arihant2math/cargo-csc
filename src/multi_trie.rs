@@ -1,5 +1,6 @@
-use crate::Trie;
 use std::{cell::OnceCell, sync::Arc};
+
+use crate::Trie;
 
 #[derive(Debug, Default)]
 pub struct MultiTrie {

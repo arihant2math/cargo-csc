@@ -1,14 +1,15 @@
 mod trie;
 
+use std::{fs, io::Write};
+
+use anyhow::Context;
+use git2::Repository;
 pub use trie::CspellTrie;
 
 use crate::{
     dictionary,
     filesystem::{cspell_path, store_path},
 };
-use anyhow::Context;
-use git2::Repository;
-use std::{fs, io::Write};
 
 const URL: &str = "https://github.com/arihant2math/cspell-dicts";
 

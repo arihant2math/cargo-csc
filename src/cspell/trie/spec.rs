@@ -1,6 +1,8 @@
-use crate::Trie;
-use flate2::bufread::GzDecoder;
 use std::{cell::RefCell, collections::HashMap, io::Read, rc::Rc};
+
+use flate2::bufread::GzDecoder;
+
+use crate::Trie;
 
 #[derive(Debug)]
 struct Version(pub String);

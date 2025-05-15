@@ -1,7 +1,3 @@
-use anyhow::{Context, bail};
-use args::{CacheCommand, CheckArgs, CliArgs};
-use clap::Parser;
-use dashmap::DashMap;
 use std::{
     fs,
     io::Write,
@@ -10,6 +6,11 @@ use std::{
     thread,
     time::Duration,
 };
+
+use anyhow::{Context, bail};
+use args::{CacheCommand, CheckArgs, CliArgs};
+use clap::Parser;
+use dashmap::DashMap;
 use tokio::{sync::Mutex, task, time::Instant};
 use url::Url;
 
@@ -23,13 +24,14 @@ mod multi_trie;
 mod settings;
 mod trie;
 
-use crate::args::{ContextArgs, OutputFormat, TraceArgs};
 pub use code::{Typo, get_code, handle_node};
 pub use dictionary::Dictionary;
 pub use filesystem::{cache_path, store_path};
 pub use multi_trie::MultiTrie;
 pub use settings::Settings;
 pub use trie::Trie;
+
+use crate::args::{ContextArgs, OutputFormat, TraceArgs};
 
 type HashSet<T> = ahash::HashSet<T>;
 type HashMap<K, V> = ahash::HashMap<K, V>;

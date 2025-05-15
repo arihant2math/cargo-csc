@@ -1,10 +1,10 @@
-use anyhow::{Context, bail};
-
 use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
 };
+
+use anyhow::{Context, bail};
 
 pub fn get_file_extension(file: &Path) -> Option<String> {
     file.extension()

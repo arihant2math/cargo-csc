@@ -2,9 +2,10 @@
 
 mod spec;
 
-use crate::Trie;
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
+
+use crate::Trie;
 
 trait CspellTrieVersion {
     fn read(lines: &[String]) -> anyhow::Result<Trie>;

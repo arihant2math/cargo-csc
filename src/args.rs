@@ -1,5 +1,6 @@
-use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum OutputFormat {

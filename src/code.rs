@@ -1,10 +1,11 @@
-use anyhow::bail;
-use miette::{Diagnostic, NamedSource, SourceOffset, SourceSpan};
 use std::{
     fmt::{Debug, Display, Formatter},
     path::PathBuf,
     sync::Arc,
 };
+
+use anyhow::bail;
+use miette::{Diagnostic, NamedSource, SourceOffset, SourceSpan};
 use tokio::{fs::File, io, io::AsyncReadExt};
 use tree_sitter::Node;
 

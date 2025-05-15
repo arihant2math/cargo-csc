@@ -1,7 +1,8 @@
+use std::path::PathBuf;
+
 use ahash::HashMapExt;
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 use crate::{HashMap, Trie, filesystem, store_path};
 
