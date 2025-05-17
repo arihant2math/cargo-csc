@@ -380,7 +380,17 @@ async fn trace(args: TraceArgs) -> anyhow::Result<()> {
 async fn cache(args: CacheCommand) -> anyhow::Result<()> {
     match args {
         CacheCommand::Build => {
-            todo!();
+            let dict_dir = store_path();
+            // List all files in the directory
+            let mut files = vec![];
+            for entry in fs::read_dir(dict_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                files.push(path);
+            }
+            for path in files {
+                let _ = Dictionary::new_with_path(path)?.compile()?;
+            }
         }
         CacheCommand::Clear => {
             let cache_dir = cache_path();
