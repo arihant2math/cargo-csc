@@ -154,6 +154,8 @@ impl ContextArgs for TraceArgs {
 #[derive(Clone, Debug, Args)]
 pub struct InstallArgs {
     pub uri: String,
+    #[arg(short, long, default_value_t = false)]
+    pub yes: bool,
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -162,6 +164,8 @@ pub enum CacheCommand {
     Build,
     /// Clear the cache
     Clear,
+    /// List all cache items
+    List
 }
 
 #[derive(Parser, Debug)]

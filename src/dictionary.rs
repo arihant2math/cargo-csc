@@ -117,7 +117,7 @@ impl DictCacheStore {
     }
 }
 
-fn dict_cache_store_location() -> anyhow::Result<PathBuf> {
+pub fn dict_cache_store_location() -> anyhow::Result<PathBuf> {
     let mut path = crate::cache_path();
     path.push("cache.json");
     Ok(path)

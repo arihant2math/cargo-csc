@@ -84,7 +84,8 @@ impl CustomDictionaryDefinitionGit {
                 }
             }
         };
-        todo!();
+        // TODO: ensure the repo is in a clean state and on the correct identifier
+        Ok(())
     }
 
     pub fn url(&self) -> String {

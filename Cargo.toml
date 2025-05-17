@@ -25,6 +25,7 @@ fst = { version = "0.4", features = ["levenshtein"] }
 git2 = "0.20"
 glob = "0.3"
 ignore = "0.4"
+inquire = "0.7.5"
 miette = { version = "7.6", features = ["fancy", "syntect-highlighter"] }
 num_cpus = "1.16"
 regex = "1"
@@ -49,3 +50,4 @@ tree-sitter-toml-ng = "0.7"
 tree-sitter-typescript = "0.23"
 url = "2.5"
 walkdir = "2.5.0"
+zip = "3.0.0"

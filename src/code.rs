@@ -79,6 +79,8 @@ pub fn handle_node(words: &crate::MultiTrie, node: &Node, source_code: Arc<str>)
     for child in node.children(&mut node.walk()) {
         typos.append(&mut handle_node(words, &child, source_code.clone()));
     }
+    // De-duplicate typos
+    typos.dedup_by(|a, b| a.word == b.word && a.line == b.line && a.column == b.column);
     typos
 }
 

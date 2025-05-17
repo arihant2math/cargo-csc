@@ -11,6 +11,7 @@ use anyhow::{Context, bail};
 use args::{CacheCommand, CheckArgs, CliArgs};
 use clap::Parser;
 use dashmap::DashMap;
+use inquire::Confirm;
 use tokio::{sync::Mutex, task, time::Instant};
 use url::Url;
 
@@ -32,6 +33,7 @@ pub use settings::Settings;
 pub use trie::Trie;
 
 use crate::args::{ContextArgs, OutputFormat, TraceArgs};
+use crate::dictionary::{dict_cache_store_location, DictCacheStore};
 
 pub type HashSet<T> = ahash::HashSet<T>;
 pub type HashMap<K, V> = ahash::HashMap<K, V>;
@@ -389,6 +391,12 @@ async fn cache(args: CacheCommand) -> anyhow::Result<()> {
                 eprintln!("Cache directory does not exist: {}", cache_dir.display());
             }
         }
+        CacheCommand::List => {
+            let cache_info = DictCacheStore::load_from_file(dict_cache_store_location()?)?;
+            for k in cache_info.0.keys() {
+                println!("- {}", k);
+            }
+        }
     }
     Ok(())
 }
@@ -426,13 +434,90 @@ async fn main() -> anyhow::Result<()> {
                 InstallType::Url(ref url) => {
                     let response = reqwest::get(url.clone()).await?;
                     if response.status().is_success() {
-                        let mut file = fs::File::create(
-                            store_path().join(url.path_segments().unwrap().next_back().unwrap()),
-                        )?;
                         let content = response.bytes().await?.to_vec();
-                        file.write_all(&content)?;
+                        let end = url
+                            .path_segments()
+                            .map(|s| s.last())
+                            .flatten()
+                            .unwrap_or_default();
+                        if end.ends_with(".zip") {
+                            let zip_path = store_path().join(end);
+                            if zip_path.exists() {
+                                if !args.yes {
+                                    let confirm = Confirm::new("File already exists, overwrite?")
+                                        .with_default(false)
+                                        .prompt()?;
+                                    if !confirm {
+                                        println!("Aborting");
+                                        return Ok(());
+                                    }
+                                }
+                                if zip_path.is_dir() {
+                                    fs::remove_dir_all(&zip_path).context(format!(
+                                        "Failed to remove existing dir: {}",
+                                        zip_path.display()
+                                    ))?;
+                                } else {
+                                    fs::remove_file(&zip_path).context(format!(
+                                        "Failed to remove existing file: {}",
+                                        zip_path.display()
+                                    ))?;
+                                }
+                            }
+                            let mut file = fs::File::create(&zip_path)?;
+                            file.write_all(&content)?;
+                            let mut archive = zip::ZipArchive::new(fs::File::open(zip_path)?)?;
+                            let base_out_path = store_path().join(
+                                url.path_segments()
+                                    .unwrap()
+                                    .next_back()
+                                    .unwrap()
+                                    .strip_suffix(".zip")
+                                    .unwrap(),
+                            );
+                            for i in 0..archive.len() {
+                                let mut file = archive.by_index(i)?;
+                                let outpath = base_out_path.join(file.name());
+                                if file.is_dir() {
+                                    fs::create_dir_all(&outpath)?;
+                                } else {
+                                    let mut outfile = fs::File::create(&outpath)?;
+                                    std::io::copy(&mut file, &mut outfile)?;
+                                }
+                            }
+                        } else {
+                            let path = store_path()
+                                .join(url.path_segments().unwrap().next_back().unwrap());
+                            if path == store_path() {
+                                bail!("Cannot install to cache directory");
+                            }
+                            if path.exists() {
+                                if !args.yes {
+                                    let confirm = Confirm::new(&format!("File {path} already exists, overwrite?", path = path.display()))
+                                        .with_default(false)
+                                        .prompt()?;
+                                    if !confirm {
+                                        println!("Aborting");
+                                        return Ok(());
+                                    }
+                                }
+                                if path.is_dir() {
+                                    fs::remove_dir_all(&path).context(format!(
+                                        "Failed to remove existing dir: {}",
+                                        path.display()
+                                    ))?;
+                                } else {
+                                    fs::remove_file(&path).context(format!(
+                                        "Failed to remove existing file: {}",
+                                        path.display()
+                                    ))?;
+                                }
+                            }
+                            let mut file = fs::File::create(path)?;
+                            file.write_all(&content)?;
+                        }
                     } else {
-                        bail!("Failed to download file from URL: {}", url);
+                        bail!("Failed to download file from {}: {}", url, response.status());
                     }
                 }
             }
