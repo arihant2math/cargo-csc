@@ -32,8 +32,10 @@ pub use multi_trie::MultiTrie;
 pub use settings::Settings;
 pub use trie::Trie;
 
-use crate::args::{ContextArgs, OutputFormat, TraceArgs};
-use crate::dictionary::{dict_cache_store_location, DictCacheStore};
+use crate::{
+    args::{ContextArgs, OutputFormat, TraceArgs},
+    dictionary::{DictCacheStore, dict_cache_store_location},
+};
 
 pub type HashSet<T> = ahash::HashSet<T>;
 pub type HashMap<K, V> = ahash::HashMap<K, V>;
@@ -493,9 +495,12 @@ async fn main() -> anyhow::Result<()> {
                             }
                             if path.exists() {
                                 if !args.yes {
-                                    let confirm = Confirm::new(&format!("File {path} already exists, overwrite?", path = path.display()))
-                                        .with_default(false)
-                                        .prompt()?;
+                                    let confirm = Confirm::new(&format!(
+                                        "File {path} already exists, overwrite?",
+                                        path = path.display()
+                                    ))
+                                    .with_default(false)
+                                    .prompt()?;
                                     if !confirm {
                                         println!("Aborting");
                                         return Ok(());
@@ -517,7 +522,11 @@ async fn main() -> anyhow::Result<()> {
                             file.write_all(&content)?;
                         }
                     } else {
-                        bail!("Failed to download file from {}: {}", url, response.status());
+                        bail!(
+                            "Failed to download file from {}: {}",
+                            url,
+                            response.status()
+                        );
                     }
                 }
             }

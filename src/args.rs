@@ -165,7 +165,7 @@ pub enum CacheCommand {
     /// Clear the cache
     Clear,
     /// List all cache items
-    List
+    List,
 }
 
 #[derive(Parser, Debug)]
