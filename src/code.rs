@@ -16,7 +16,7 @@ pub async fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Pa
     reader.read_to_string(&mut source_code).await?;
     let mut parser = tree_sitter::Parser::new();
     match crate::filesystem::get_file_extension(path)
-        .unwrap()
+        .unwrap_or_default()
         .as_str()
     {
         "c" => {
@@ -59,7 +59,7 @@ pub async fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Pa
     Ok((source_code, parser))
 }
 
-pub fn handle_node(words: &crate::MultiTrie, node: &Node, source_code: Arc<str>) -> Vec<Typo> {
+pub fn handle_node(words: &crate::MultiTrie, node: &Node, source_code: &Arc<str>) -> Vec<Typo> {
     let start_byte = node.start_byte();
     let end_byte = node.end_byte();
     let text = &source_code[start_byte..end_byte];
@@ -70,14 +70,14 @@ pub fn handle_node(words: &crate::MultiTrie, node: &Node, source_code: Arc<str>)
                 if let Some(typo) = words.handle_identifier(word) {
                     // TODO: Fix
                     // let suggestion = words.suggestion(&typo);
-                    let typo = Typo::new(typo, node.clone(), source_code.clone(), None);
+                    let typo = Typo::new(typo, *node, source_code.clone(), None);
                     typos.push(typo);
                 }
             }
         }
     }
     for child in node.children(&mut node.walk()) {
-        typos.append(&mut handle_node(words, &child, source_code.clone()));
+        typos.append(&mut handle_node(words, &child, source_code));
     }
     // De-duplicate typos
     typos.dedup_by(|a, b| a.word == b.word && a.line == b.line && a.column == b.column);
@@ -101,7 +101,7 @@ impl Typo {
         let line = node.start_position().row + 1;
         let column = node.start_position().column + 1;
         let length = end_byte - start_byte;
-        Typo {
+        Self {
             line,
             column,
             length,
@@ -124,7 +124,7 @@ impl Typo {
         Self::new(word, node, source_code, None)
     }
 
-    pub fn to_diagnostic(&self, file: String) -> TypoDiagnostic {
+    pub fn to_diagnostic(&self, file: &str) -> TypoDiagnostic {
         let offset = SourceOffset::from_location(self.source.clone(), self.line, self.column);
         let span = SourceSpan::new(offset, self.length);
         let suggestion_text = match self.suggestion {
@@ -132,7 +132,7 @@ impl Typo {
             None => String::new(),
         };
         TypoDiagnostic {
-            src: NamedSource::new(&file, self.source.clone()),
+            src: NamedSource::new(file, self.source.clone()),
             typo_span: span,
             advice: format!("Unknown word `{}`.{}", self.word, suggestion_text),
         }

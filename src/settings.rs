@@ -45,7 +45,7 @@ impl CustomDictionaryDefinitionGit {
     pub fn init(&self) -> anyhow::Result<()> {
         let url = self.url();
         let repo_path = self.path();
-        let repo = if !repo_path.exists() {
+        let _repo = if !repo_path.exists() {
             fs::create_dir_all(&repo_path).context(format!(
                 "Failed to create temporary directory: {}",
                 repo_path.display()
@@ -53,34 +53,35 @@ impl CustomDictionaryDefinitionGit {
 
             println!("Cloning {url}");
             crate::git::clone(&url, &repo_path)
-                .with_context(|| format!("failed to clone: {}", url))?
+                .with_context(|| format!("failed to clone: {url}"))?
         } else {
             let res = Repository::open(&repo_path);
             match res {
                 Ok(repo) => {
+                    const SECONDS_IN_HOUR: u64 = 60 * 60;
+
                     // TODO: choose when to update repo
                     let repo_path_info = fs::metadata(&repo_path)?;
                     let secs_since_last_accessed = repo_path_info.accessed()?.elapsed()?.as_secs();
 
-                    const SECONDS_IN_HOUR: u64 = 60 * 60;
                     let should_update = secs_since_last_accessed > SECONDS_IN_HOUR * 3;
 
                     if should_update {
                         let mut remote = repo.find_remote("origin")?;
                         let remote_branch = "main";
                         let fetch_commit = crate::git::fetch(&repo, &[remote_branch], &mut remote)?;
-                        crate::git::merge(&repo, &remote_branch, fetch_commit)?;
+                        crate::git::merge(&repo, remote_branch, fetch_commit)?;
                         drop(remote);
                     }
                     repo
                 }
                 Err(e) => {
-                    eprintln!("Failed to open temporary directory: {}", e);
+                    eprintln!("Failed to open temporary directory: {e}");
                     // Reclone
                     fs::remove_dir_all(&repo_path).ok();
                     println!("Recloning {url}");
                     crate::git::clone(&url, &repo_path)
-                        .with_context(|| format!("failed to clone: {}", url))?
+                        .with_context(|| format!("failed to clone: {url}"))?
                 }
             }
         };
@@ -90,8 +91,7 @@ impl CustomDictionaryDefinitionGit {
 
     pub fn url(&self) -> String {
         match self {
-            Self::Simple(url) => url.clone(),
-            Self::Custom { url, .. } => url.clone(),
+            Self::Simple(url) | Self::Custom { url, .. } => url.clone(),
         }
     }
 
@@ -149,8 +149,7 @@ pub enum DictionaryName {
 impl DictionaryName {
     pub fn name(&self) -> String {
         match self {
-            DictionaryName::Simple(name) => name.clone(),
-            DictionaryName::Detailed { name, .. } => name.clone(),
+            Self::Simple(name) | Self::Detailed { name, .. } => name.clone(),
         }
     }
 }
@@ -169,7 +168,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings {
+        Self {
             dictionaries: vec![
                 DictionaryName::Simple("extra".to_string()),
                 DictionaryName::Simple("en-US".to_string()),
@@ -185,13 +184,14 @@ impl Default for Settings {
 }
 
 impl Settings {
+    #[must_use]
     pub fn new() -> Self {
-        Settings::default()
+        Self::default()
     }
 
     pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
-        let data = std::fs::read_to_string(path)?;
-        let settings: Settings = serde_hjson::from_str(&data)?;
+        let data = fs::read_to_string(path)?;
+        let settings: Self = serde_hjson::from_str(&data)?;
         Ok(settings)
     }
 
@@ -204,15 +204,12 @@ impl Settings {
     pub fn load(override_: Option<String>) -> Self {
         let path = override_.unwrap_or_else(|| "code-spellcheck.json".to_string());
         if std::path::Path::new(&path).exists() {
-            match Settings::load_from_file(&path) {
-                Ok(settings) => settings,
-                Err(e) => {
-                    eprintln!("Error loading settings from {}: {}", path, e);
-                    Settings::default()
-                }
-            }
+            Self::load_from_file(&path).unwrap_or_else(|e| {
+                eprintln!("Error loading settings from {path}: {e}");
+                Self::default()
+            })
         } else {
-            Settings::default()
+            Self::default()
         }
     }
 }

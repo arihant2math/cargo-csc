@@ -28,7 +28,7 @@ impl Debug for Trie {
 
 impl Default for Trie {
     fn default() -> Self {
-        Trie {
+        Self {
             root: fst::map::Map::from_iter::<&str, Vec<(&str, u64)>>(vec![]).unwrap(),
             options: TrieOptions::default(),
         }
@@ -36,8 +36,9 @@ impl Default for Trie {
 }
 
 impl Trie {
+    #[must_use]
     pub fn new() -> Self {
-        Trie {
+        Self {
             options: TrieOptions::new(),
             ..Default::default()
         }
@@ -72,16 +73,16 @@ impl Trie {
 
     pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
         let data = std::fs::read(path)?;
-        Trie::load(&data)
+        Self::load(&data)
     }
 
+    #[must_use]
     pub fn contains(&self, word: &str) -> bool {
         self.root.contains_key(word)
     }
 
     pub fn to_vec(&self) -> Vec<String> {
-        let words = self.root.stream().into_str_keys().unwrap();
-        words
+        self.root.stream().into_str_keys().unwrap()
     }
 
     pub fn check(&self, word: &str) -> anyhow::Result<Option<String>> {
@@ -105,7 +106,7 @@ pub struct TrieOptions {
 
 impl Default for TrieOptions {
     fn default() -> Self {
-        TrieOptions {
+        Self {
             cache: true,
             case_sensitive: false,
         }
@@ -114,7 +115,7 @@ impl Default for TrieOptions {
 
 impl TrieOptions {
     pub fn new() -> Self {
-        TrieOptions::default()
+        Self::default()
     }
 
     pub fn add_command(&mut self, command: &Command) {
@@ -140,12 +141,12 @@ impl From<&[Rule]> for Trie {
                 Rule::Command(command) => {
                     options.add_command(command);
                 }
-                _ => {}
+                Rule::Comment(_) => {}
             }
         }
         trie.sort_by_key(|(word, _)| word.to_string());
         trie.dedup();
-        Trie {
+        Self {
             root: fst::map::Map::from_iter(trie).unwrap(),
             options,
         }

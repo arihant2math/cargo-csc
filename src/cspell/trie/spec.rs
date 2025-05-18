@@ -2,13 +2,14 @@ use std::{cell::RefCell, collections::HashMap, io::Read, rc::Rc};
 
 use flate2::bufread::GzDecoder;
 
-use crate::Trie;
+use crate::{Trie, trie::TrieOptions};
 
 #[derive(Debug)]
-struct Version(pub String);
+struct Version(#[allow(dead_code)] pub String);
 
 impl Version {
     // TODO: Should be result due to unwrap
+    #[expect(dead_code)]
     pub fn to_u8(&self) -> u8 {
         self.0
             .split('v')
@@ -20,6 +21,7 @@ impl Version {
 
 #[derive(Debug)]
 pub struct Header {
+    #[expect(unused)]
     version: Version,
     base: u8,
 }
@@ -97,7 +99,7 @@ impl TrieBuilder {
             let pos_pos = self
                 .pos
                 .iter()
-                .position(|p| Rc::ptr_eq(&p, &node))
+                .position(|p| Rc::ptr_eq(p, node))
                 .map(|p| p as i64)
                 .unwrap_or(-1);
             let node_borrow = node.borrow();
@@ -110,7 +112,7 @@ impl TrieBuilder {
                         ch,
                         self.nodes
                             .iter()
-                            .position(|p| Rc::ptr_eq(&p, &v))
+                            .position(|p| Rc::ptr_eq(p, v))
                             .unwrap_or(usize::MAX),
                     )
                 })
@@ -168,12 +170,12 @@ impl TrieBuilder {
                     }
                     '<' => {
                         self.pos.pop().unwrap();
-                        *state = ParseState::Remove
+                        *state = ParseState::Remove;
                     }
                     '#' => {
                         *state = ParseState::AbsoluteReference { chars: vec![c] };
                     }
-                    d if d.is_digit(10) && d != '1' => {
+                    d if d.is_ascii_digit() && d != '1' => {
                         let n = d.to_digit(10).unwrap() - 1;
                         for _ in 0..n {
                             self.pos.pop().unwrap();
@@ -197,7 +199,7 @@ impl TrieBuilder {
                         self.jump_to(idx);
                     } else {
                         self.dbg_state();
-                        panic!("Index out of bounds: {}", idx);
+                        panic!("Index out of bounds: {idx}");
                     }
                     *state = ParseState::InWord;
                 } else {
@@ -245,7 +247,7 @@ impl TrieBuilder {
 
 impl TrieNode {
     /// Create a new TrieNode.
-    fn new(ch: char, eow: bool) -> Self {
+    fn new(_ch: char, eow: bool) -> Self {
         Self {
             eow,
             children: HashMap::new(),
@@ -262,7 +264,7 @@ impl TrieNode {
 
 /// Recursively convert the builder trie into the output Trie structure.
 fn convert_trie(builder_root: Rc<RefCell<TrieNode>>) -> Trie {
-    fn rec_convert(node: &Rc<RefCell<TrieNode>>) -> fst::map::Map<Vec<u8>> {
+    fn rec_convert(_node: &Rc<RefCell<TrieNode>>) -> fst::map::Map<Vec<u8>> {
         // let node_ref = node.borrow();
         // let mut out = if node_ref.eow {
         //     crate::trie::TrieNode::some_default()
@@ -278,11 +280,11 @@ fn convert_trie(builder_root: Rc<RefCell<TrieNode>>) -> Trie {
     let root_converted = rec_convert(&builder_root);
     Trie {
         root: root_converted,
-        options: Default::default(),
+        options: TrieOptions::default(),
     }
 }
 
-/// Refactored parse_body function.
+/// Refactored `parse_body` function.
 pub fn parse_body(input: &[String], header: &Header) -> Trie {
     let mut builder = TrieBuilder::new();
     let mut state = ParseState::InWord;
@@ -324,7 +326,7 @@ pub fn file_to_lines<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Vec<
     };
 
     // Split on newlines (`lines()` handles `\n` and `\r\n`)
-    Ok(text.lines().map(|s| s.to_string()).collect())
+    Ok(text.lines().map(ToString::to_string).collect())
 }
 
 #[cfg(test)]

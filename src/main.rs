@@ -57,7 +57,7 @@ impl MergedSettings {
 
     fn root_path(&self) -> PathBuf {
         if self.args.dir().is_absolute() {
-            self.args.dir().clone()
+            self.args.dir()
         } else {
             std::env::current_dir().unwrap()
         }
@@ -72,7 +72,7 @@ impl MergedSettings {
                 dictionaries.push(dictionary);
             }
         }
-        for def in self.settings.dictionary_definitions.iter() {
+        for def in &self.settings.dictionary_definitions {
             dictionaries.push(Dictionary::new_custom(def.clone(), self.root_path()));
         }
         // check store_path for dictionaries
@@ -87,7 +87,7 @@ impl MergedSettings {
             match Dictionary::new_with_path(path) {
                 Ok(dictionary) => dictionaries.push(dictionary),
                 Err(e) => {
-                    eprintln!("Failed to load dictionary from store: {}", e);
+                    eprintln!("Failed to load dictionary from store: {e}");
                 }
             }
         }
@@ -102,7 +102,7 @@ impl MergedSettings {
             .into_iter()
             .map(|s| s.name())
             .collect::<Vec<_>>();
-        dictionaries.extend(self.args.extra_dictionaries().clone());
+        dictionaries.extend(self.args.extra_dictionaries());
         dictionaries
     }
 
@@ -131,7 +131,7 @@ impl SharedRuntimeContext {
     }
 
     fn custom_trie(&self) -> anyhow::Result<Trie> {
-        let v = Dictionary::new_from_strings(self.settings.settings.words.clone());
+        let v = Dictionary::new_from_strings(&self.settings.settings.words);
         v.compile()
     }
 
@@ -159,7 +159,7 @@ fn get_multi_trie<P: AsRef<Path>>(
         }
     }
     let mut trie = MultiTrie::new();
-    let tries = context.get_base_dictionaries().clone();
+    let tries = context.get_base_dictionaries();
 
     for name in tries {
         let trie_instance = context
@@ -183,11 +183,10 @@ async fn handle_file(
         println!("Starting thread #{:?}", thread::current().id());
     }
     loop {
-        let file = match file_receiver.lock().await.recv().await {
-            Some(f) => f,
-            None => {
-                break;
-            }
+        let file = if let Some(f) = file_receiver.lock().await.recv().await {
+            f
+        } else {
+            break;
         };
         let (source_code, mut parser) = get_code(&file)
             .await
@@ -199,7 +198,7 @@ async fn handle_file(
         ))?;
         let tree = parser.parse(&source_code, None).unwrap();
         let root_node = Box::new(tree.root_node());
-        let typos = handle_node(&dict, &root_node, source_code.into());
+        let typos = handle_node(&dict, &root_node, &source_code.into());
         let result = CheckFileResult {
             file: file.clone(),
             typos,
@@ -250,14 +249,12 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
             // Find files, also send them to file_sender
             let pattern =
                 glob::Pattern::new(glob.as_ref().unwrap_or(&"**/*.*".to_string())).unwrap();
-            let walker = ignore::WalkBuilder::new(context.settings.args.dir().clone()).build();
+            let walker = ignore::WalkBuilder::new(context.settings.args.dir()).build();
             let mut files = vec![];
-            for file in walker {
-                if let Ok(file) = file {
-                    if file.path().is_file() && pattern.matches_path(file.path()) {
-                        file_sender.send(file.path().to_path_buf()).await.unwrap();
-                        files.push(file.path().to_path_buf());
-                    }
+            for file in walker.flatten() {
+                if file.path().is_file() && pattern.matches_path(file.path()) {
+                    file_sender.send(file.path().to_path_buf()).await.unwrap();
+                    files.push(file.path().to_path_buf());
                 }
             }
             files
@@ -275,7 +272,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     if total_files == 1 {
         println!("Found 1 file");
     } else {
-        println!("Found {} files", total_files);
+        println!("Found {total_files} files");
     }
 
     let (result_sender, mut result_receiver) = tokio::sync::mpsc::channel(256);
@@ -291,12 +288,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
         .collect::<Vec<_>>();
     let mut counter = 0;
     drop(result_sender);
-    let output = context
-        .settings
-        .args
-        .output()
-        .clone()
-        .unwrap_or(OutputFormat::Text);
+    let output = context.settings.args.output().unwrap_or(OutputFormat::Text);
     if matches!(&output, OutputFormat::Json) {
         todo!();
     }
@@ -322,8 +314,9 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
             }
         }
         for typo in &result.typos {
-            let diagnostic: miette::Report =
-                typo.to_diagnostic(result.file.display().to_string()).into();
+            let diagnostic: miette::Report = typo
+                .to_diagnostic(&result.file.display().to_string())
+                .into();
             println!("{diagnostic:?}");
         }
     }
@@ -343,7 +336,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
             println!("Threads are taking too long to finish, exiting...");
             std::process::exit(1);
         }
-        if threads.iter().all(|t| t.is_finished()) {
+        if threads.iter().all(thread::JoinHandle::is_finished) {
             break;
         }
     }
@@ -353,7 +346,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn trace(args: TraceArgs) -> anyhow::Result<()> {
+fn trace(args: &TraceArgs) -> anyhow::Result<()> {
     let settings = Settings::load(args.settings.clone().map(|p| p.display().to_string()));
     // Generate context
     let context = Arc::new(SharedRuntimeContext::new(MergedSettings::new(
@@ -363,7 +356,7 @@ async fn trace(args: TraceArgs) -> anyhow::Result<()> {
     let load_dictionaries_context = context.clone();
     load_dictionaries(load_dictionaries_context)?;
     let mut found = false;
-    for kv in context.dictionaries.iter() {
+    for kv in &context.dictionaries {
         let name = kv.key();
         let dict = kv.value();
         if dict.contains(&args.word) {
@@ -406,7 +399,7 @@ async fn cache(args: CacheCommand) -> anyhow::Result<()> {
         CacheCommand::List => {
             let cache_info = DictCacheStore::load_from_file(dict_cache_store_location()?)?;
             for k in cache_info.0.keys() {
-                println!("- {}", k);
+                println!("- {k}");
             }
         }
     }
@@ -421,8 +414,8 @@ async fn main() -> anyhow::Result<()> {
         CliArgs::Check(args) => {
             check(args).await?;
         }
-        CliArgs::Trace(args) => {
-            trace(args).await?;
+        CliArgs::Trace(ref args) => {
+            trace(args)?;
         }
         CliArgs::Cache(args) => {
             cache(args).await?;
@@ -449,10 +442,12 @@ async fn main() -> anyhow::Result<()> {
                         let content = response.bytes().await?.to_vec();
                         let end = url
                             .path_segments()
-                            .map(|s| s.last())
-                            .flatten()
+                            .and_then(|mut s| s.next_back())
                             .unwrap_or_default();
-                        if end.ends_with(".zip") {
+                        if Path::new(end)
+                            .extension()
+                            .map_or(false, |ext| ext.eq_ignore_ascii_case("zip"))
+                        {
                             let zip_path = store_path().join(end);
                             if zip_path.exists() {
                                 if !args.yes {

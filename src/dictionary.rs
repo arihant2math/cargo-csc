@@ -15,13 +15,13 @@ pub enum Command {
 impl Command {
     pub fn from_str(s: &str) -> Option<Self> {
         if s == "case-sensitive" {
-            Some(Command::CaseSensitive)
+            Some(Self::CaseSensitive)
         } else if s.starts_with("cache:") {
             let value = s.trim_start_matches("cache:");
             if value == "true" {
-                Some(Command::Cache(true))
+                Some(Self::Cache(true))
             } else if value == "false" {
-                Some(Command::Cache(false))
+                Some(Self::Cache(false))
             } else {
                 None
             }
@@ -68,18 +68,10 @@ fn load_dictionary_line(line: &str) -> anyhow::Result<Rule> {
         }
         // TODO: Handle case sensitivity
     } else if trimmed.starts_with("!") {
-        let disallow = trimmed
-            .trim_start_matches('!')
-            .trim()
-            .to_ascii_lowercase()
-            .to_string();
+        let disallow = trimmed.trim_start_matches('!').trim().to_ascii_lowercase();
         Rule::Disallow(disallow)
     } else if trimmed.starts_with("+") {
-        let allow = trimmed
-            .trim_start_matches('+')
-            .trim()
-            .to_ascii_lowercase()
-            .to_string();
+        let allow = trimmed.trim_start_matches('+').trim().to_ascii_lowercase();
         Rule::Allow(allow)
     } else {
         Rule::Allow(trimmed.to_ascii_lowercase().to_string())
@@ -167,9 +159,9 @@ impl Dictionary {
             ));
         }
         if path.is_dir() {
-            Ok(Dictionary::Directory(path))
+            Ok(Self::Directory(path))
         } else if path.is_file() {
-            Ok(Dictionary::File(path))
+            Ok(Self::File(path))
         } else {
             Err(anyhow::anyhow!(
                 "Invalid dictionary path: {}",
@@ -182,20 +174,20 @@ impl Dictionary {
         definition: crate::settings::CustomDictionaryDefinition,
         root: PathBuf,
     ) -> Self {
-        Dictionary::Custom { definition, root }
+        Self::Custom { definition, root }
     }
 
     pub fn new_with_rules(rules: Vec<Rule>) -> Self {
-        Dictionary::Rules(rules)
+        Self::Rules(rules)
     }
 
-    pub fn new_from_strings(strings: Vec<String>) -> Self {
+    pub fn new_from_strings(strings: &[String]) -> Self {
         let rules = strings
             .iter()
             .map(|s| load_dictionary_line(s))
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        Dictionary::Rules(rules)
+        Self::Rules(rules)
     }
 
     fn load_from_cache_inner(&self, path: &PathBuf) -> anyhow::Result<Option<Trie>> {
@@ -206,7 +198,7 @@ impl Dictionary {
         let cache_hash_store = DictCacheStore::load_from_file(dict_cache_store_location()?)?;
         if let Some(hash) = cache_hash_store.0.get(&path_hash) {
             if hash == &fs_hash {
-                let cache_path = filesystem::cache_path().join(format!("{}.bin", path_hash));
+                let cache_path = filesystem::cache_path().join(format!("{path_hash}.bin"));
                 if cache_path.exists() {
                     let trie = Trie::load_from_file(cache_path)?;
                     return Ok(Some(trie));
@@ -226,7 +218,7 @@ impl Dictionary {
             .to_hex()
             .to_string();
         let fs_hash = filesystem::get_path_hash(path)?;
-        let cache_path = filesystem::cache_path().join(format!("{}.bin", path_hash));
+        let cache_path = filesystem::cache_path().join(format!("{path_hash}.bin"));
         trie.dump_to_file(&cache_path)?;
         let mut cache_hash_store = DictCacheStore::load_from_file(dict_cache_store_location()?)?;
         cache_hash_store.0.insert(path_hash, fs_hash);
@@ -241,11 +233,11 @@ impl Dictionary {
 
     pub fn get_names(&self) -> anyhow::Result<Vec<String>> {
         match self {
-            Dictionary::File(path) => Ok(vec![
+            Self::File(path) | Self::Trie(path) => Ok(vec![
                 path.file_stem().unwrap().to_string_lossy().to_string(),
             ]),
-            Dictionary::Custom { definition, .. } => Ok(vec![definition.name.clone()]),
-            Dictionary::Directory(path) => {
+            Self::Custom { definition, .. } => Ok(vec![definition.name.clone()]),
+            Self::Directory(path) => {
                 let config_path = path.join("csc-config.json");
                 if !config_path.exists() {
                     return Err(anyhow::anyhow!(
@@ -257,21 +249,18 @@ impl Dictionary {
                     serde_hjson::from_reader(std::fs::File::open(config_path)?)?;
                 Ok(vec![content.name])
             }
-            Dictionary::Trie(path) => Ok(vec![
-                path.file_stem().unwrap().to_string_lossy().to_string(),
-            ]),
-            Dictionary::Rules(_) => Ok(vec![]),
+            Self::Rules(_) => Ok(vec![]),
         }
     }
 
     fn compile_inner(&self) -> anyhow::Result<Trie> {
         match self {
-            Dictionary::File(path) => {
+            Self::File(path) => {
                 if let Some(cache) = self.load_from_cache(path)? {
                     return Ok(cache);
                 }
             }
-            Dictionary::Directory(path) => {
+            Self::Directory(path) => {
                 let config_path = path.join("csc-config.json");
                 if !config_path.exists() {
                     return Err(anyhow::anyhow!(
@@ -287,17 +276,15 @@ impl Dictionary {
                     }
                 }
             }
-            Dictionary::Rules(_) => {}
-            // TODO: Fix
-            Dictionary::Custom { .. } => {}
-            &Dictionary::Trie(ref path) => {
+            Self::Rules(_) | Self::Custom { .. } => {}
+            Self::Trie(path) => {
                 if let Some(cache) = self.load_from_cache(path)? {
                     return Ok(cache);
                 }
             }
         }
         match self {
-            Dictionary::File(path) => {
+            Self::File(path) => {
                 let content = std::fs::read_to_string(path)?;
                 let rules = load_dictionary_format(&content)?;
                 let trie = Trie::from(rules.as_ref());
@@ -306,9 +293,9 @@ impl Dictionary {
                 }
                 Ok(trie)
             }
-            Dictionary::Custom { definition, root } => {
+            Self::Custom { definition, root } => {
                 let mut rules = vec![];
-                let path = root.join(&definition.path());
+                let path = root.join(definition.path());
                 if !path.exists() {
                     return Err(anyhow::anyhow!(
                         "Custom dictionary file does not exist: {}",
@@ -320,7 +307,7 @@ impl Dictionary {
                 rules.extend(rules_part);
                 Ok(Trie::from(rules.as_ref()))
             }
-            Dictionary::Directory(path) => {
+            Self::Directory(path) => {
                 let config_path = path.join("csc-config.json");
                 if !config_path.exists() {
                     return Err(anyhow::anyhow!(
@@ -347,11 +334,10 @@ impl Dictionary {
                                 Self::save_to_cache(&trie, path)?;
                             }
                             return Ok(trie);
-                        } else {
-                            let content = std::fs::read_to_string(&file_path)?;
-                            let rules_part = load_dictionary_format(&content)?;
-                            rules.extend(rules_part);
                         }
+                        let content = std::fs::read_to_string(&file_path)?;
+                        let rules_part = load_dictionary_format(&content)?;
+                        rules.extend(rules_part);
                     } else {
                         return Err(anyhow::anyhow!(
                             "Dictionary file does not exist: {}",
@@ -373,16 +359,16 @@ impl Dictionary {
                 }
                 Ok(trie)
             }
-            Dictionary::Rules(rules) => {
+            Self::Rules(rules) => {
                 let mut new_rules = vec![];
                 for rule in rules {
                     new_rules.push(rule.clone());
                 }
                 new_rules.push(Rule::Command(Command::Cache(false)));
-                let trie = Trie::from(rules.as_ref());
+                let trie = Trie::from(new_rules.as_ref());
                 Ok(trie)
             }
-            Dictionary::Trie(path) => {
+            Self::Trie(path) => {
                 let content = std::fs::read(path)?;
                 let trie = Trie::load(&content)?;
                 if trie.options.cache {

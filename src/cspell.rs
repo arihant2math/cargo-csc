@@ -22,7 +22,7 @@ pub fn import() -> anyhow::Result<()> {
         ))?;
 
         println!("Cloning {URL}");
-        crate::git::clone(URL, &repo_path).with_context(|| format!("failed to clone: {}", URL))?;
+        crate::git::clone(URL, &repo_path).with_context(|| format!("failed to clone: {URL}"))?;
     } else {
         let res = Repository::open(&repo_path);
         match res {
@@ -31,16 +31,16 @@ pub fn import() -> anyhow::Result<()> {
                 let mut remote = repo.find_remote("origin")?;
                 let remote_branch = "main";
                 let fetch_commit = crate::git::fetch(&repo, &[remote_branch], &mut remote)?;
-                crate::git::merge(&repo, &remote_branch, fetch_commit)?;
+                crate::git::merge(&repo, remote_branch, fetch_commit)?;
                 drop(remote);
             }
             Err(e) => {
-                eprintln!("Failed to open temporary directory: {}", e);
+                eprintln!("Failed to open temporary directory: {e}");
                 // Reclone
                 fs::remove_dir_all(&repo_path).ok();
                 println!("Recloning {URL}");
                 crate::git::clone(URL, &repo_path)
-                    .with_context(|| format!("failed to clone: {}", URL))?;
+                    .with_context(|| format!("failed to clone: {URL}"))?;
             }
         }
     }

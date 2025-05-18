@@ -15,34 +15,34 @@ struct State {
 }
 
 fn print(state: &mut State) {
-    let stats = state.progress.as_ref().unwrap();
-    let network_pct = (100 * stats.received_objects()) / stats.total_objects();
-    let index_pct = (100 * stats.indexed_objects()) / stats.total_objects();
+    let statistics = state.progress.as_ref().unwrap();
+    let network_pct = (100 * statistics.received_objects()) / statistics.total_objects();
+    let index_pct = (100 * statistics.indexed_objects()) / statistics.total_objects();
     let co_pct = if state.total > 0 {
         (100 * state.current) / state.total
     } else {
         0
     };
-    let kilobytes = stats.received_bytes() / 1024;
-    if stats.received_objects() == stats.total_objects() {
+    let kilobytes = statistics.received_bytes() / 1024;
+    if statistics.received_objects() == statistics.total_objects() {
         if !state.newline {
             println!();
             state.newline = true;
         }
         print!(
             "Resolving deltas {}/{}\r",
-            stats.indexed_deltas(),
-            stats.total_deltas()
+            statistics.indexed_deltas(),
+            statistics.total_deltas()
         );
     } else {
         print!(
             "net {network_pct:3}% ({kilobytes:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})  \
              /  chk {:3}% ({:4}/{:4}) {}\r",
-            stats.received_objects(),
-            stats.total_objects(),
+            statistics.received_objects(),
+            statistics.total_objects(),
             index_pct,
-            stats.indexed_objects(),
-            stats.total_objects(),
+            statistics.indexed_objects(),
+            statistics.total_objects(),
             co_pct,
             state.current,
             state.total,
@@ -51,7 +51,7 @@ fn print(state: &mut State) {
                 .as_ref()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default()
-        )
+        );
     }
     std::io::stdout().flush().unwrap();
 }
@@ -152,7 +152,7 @@ pub fn fetch<'a>(
     }
 
     let fetch_head = repo.find_reference("FETCH_HEAD")?;
-    Ok(repo.reference_to_annotated_commit(&fetch_head)?)
+    repo.reference_to_annotated_commit(&fetch_head)
 }
 
 fn fast_forward(
@@ -164,8 +164,8 @@ fn fast_forward(
         Some(s) => s.to_string(),
         None => String::from_utf8_lossy(lb.name_bytes()).to_string(),
     };
-    let msg = format!("Fast-Forward: Setting {} to id: {}", name, rc.id());
-    println!("{}", msg);
+    let msg = format!("Fast-Forward: Setting {name} to id: {}", rc.id());
+    println!("{msg}");
     lb.set_target(rc.id(), &msg)?;
     repo.set_head(&name)?;
     repo.checkout_head(Some(
@@ -226,8 +226,8 @@ pub fn merge<'a>(
     // 2. Do the appropriate merge
     if analysis.0.is_fast_forward() {
         println!("Doing a fast forward");
-        // do a fast forward
-        let refname = format!("refs/heads/{}", remote_branch);
+        // do a fast-forward
+        let refname = format!("refs/heads/{remote_branch}");
         match repo.find_reference(&refname) {
             Ok(mut r) => {
                 fast_forward(repo, &mut r, &fetch_commit)?;
@@ -250,11 +250,11 @@ pub fn merge<'a>(
                         .force(),
                 ))?;
             }
-        };
+        }
     } else if analysis.0.is_normal() {
         // do a normal merge
         let head_commit = repo.reference_to_annotated_commit(&repo.head()?)?;
-        normal_merge(&repo, &head_commit, &fetch_commit)?;
+        normal_merge(repo, &head_commit, &fetch_commit)?;
     } else {
         println!("Nothing to do...");
     }

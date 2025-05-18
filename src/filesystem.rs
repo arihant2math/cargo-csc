@@ -13,7 +13,6 @@ pub fn get_file_extension(file: &Path) -> Option<String> {
 }
 
 pub fn csc_path() -> PathBuf {
-    #[allow(deprecated)]
     let mut path = std::env::home_dir().expect("Failed to get home directory");
     path.push(".code-spellcheck");
     if !path.exists() {
@@ -25,6 +24,7 @@ pub fn csc_path() -> PathBuf {
 macro_rules! subpath {
     ($name: ident, $path: expr) => {
         #[cached::proc_macro::cached(size = 1)]
+        #[allow(unused)]
         pub fn $name() -> PathBuf {
             let path = csc_path().join($path);
             if !path.exists() {

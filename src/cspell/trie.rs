@@ -7,12 +7,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::Trie;
 
+#[expect(dead_code)]
 trait CspellTrieVersion {
     fn read(lines: &[String]) -> anyhow::Result<Trie>;
 
-    fn write(trie: &crate::Trie) -> anyhow::Result<Vec<String>>;
+    fn write(trie: &Trie) -> anyhow::Result<Vec<String>>;
 }
 
+#[expect(dead_code)]
 struct V3;
 
 impl CspellTrieVersion for V3 {
@@ -26,6 +28,7 @@ impl CspellTrieVersion for V3 {
     }
 }
 
+#[expect(unused)]
 struct V4;
 
 impl CspellTrieVersion for V4 {

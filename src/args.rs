@@ -10,6 +10,7 @@ pub enum OutputFormat {
     Text,
 }
 
+#[expect(dead_code)]
 pub trait ContextArgs {
     fn dir(&self) -> PathBuf;
     fn verbose(&self) -> bool;

@@ -42,12 +42,10 @@ impl MultiTrie {
             parts
         }
 
-        for part in parts {
+        for &part in parts {
             if !self.contains(&part.to_ascii_lowercase()) {
                 // check if part is fully numeric
-                if part.chars().all(|c| c.is_numeric()) {
-                    continue;
-                } else {
+                if !part.chars().all(char::is_numeric) {
                     for sub_part in split_by_capitalization(part) {
                         if !self.contains(&sub_part.to_ascii_lowercase()) {
                             return Some(part.to_string());
@@ -80,11 +78,10 @@ impl MultiTrie {
         let (score, best_suggestion) = self
             .inner
             .iter()
-            .map(|t| t.check(word).unwrap())
-            .filter_map(|c| c)
+            .filter_map(|t| t.check(word).unwrap())
             .filter_map(|suggestion| {
                 let score = strsim::normalized_damerau_levenshtein(word, &suggestion);
-                Some((score, suggestion.clone()))
+                Some((score, suggestion))
             })
             .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))?;
         if score > THRESHOLD {
