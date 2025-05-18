@@ -1,3 +1,4 @@
+use std::io::BufRead;
 use std::path::PathBuf;
 
 use ahash::HashMapExt;
@@ -82,6 +83,19 @@ fn load_dictionary_format(s: &str) -> anyhow::Result<Vec<Rule>> {
     s.lines()
         .map(load_dictionary_line)
         .collect::<Result<Vec<_>, _>>()
+}
+
+fn load_dictionary_format_from_file<P: AsRef<std::path::Path>>(p: P) -> anyhow::Result<Vec<Rule>> {
+    let file = std::fs::File::open(p)?;
+    // stream lines for memory efficiency
+    let reader = std::io::BufReader::new(file);
+    let mut rules = Vec::new();
+    for line in reader.lines() {
+        let line = line?;
+        let rule = load_dictionary_line(&line)?;
+        rules.push(rule);
+    }
+    Ok(rules)
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -285,8 +299,7 @@ impl Dictionary {
         }
         match self {
             Self::File(path) => {
-                let content = std::fs::read_to_string(path)?;
-                let rules = load_dictionary_format(&content)?;
+                let rules = load_dictionary_format_from_file(path)?;
                 let trie = Trie::from(rules.as_ref());
                 if trie.options.cache {
                     Self::save_to_cache(&trie, path)?;
@@ -302,8 +315,7 @@ impl Dictionary {
                         path.display()
                     ));
                 }
-                let content = std::fs::read_to_string(&path)?;
-                let rules_part = load_dictionary_format(&content)?;
+                let rules_part = load_dictionary_format_from_file(&path)?;
                 rules.extend(rules_part);
                 Ok(Trie::from(rules.as_ref()))
             }
@@ -335,8 +347,7 @@ impl Dictionary {
                             }
                             return Ok(trie);
                         }
-                        let content = std::fs::read_to_string(&file_path)?;
-                        let rules_part = load_dictionary_format(&content)?;
+                        let rules_part = load_dictionary_format_from_file(&file_path)?;
                         rules.extend(rules_part);
                     } else {
                         return Err(anyhow::anyhow!(
