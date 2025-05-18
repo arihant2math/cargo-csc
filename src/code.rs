@@ -40,6 +40,9 @@ pub async fn get_code(path: &PathBuf) -> anyhow::Result<(String, tree_sitter::Pa
         "md" => {
             parser.set_language(&tree_sitter_md::LANGUAGE.into())?;
         }
+        "rb" => {
+            parser.set_language(&tree_sitter_ruby::LANGUAGE.into())?;
+        }
         "rs" => {
             parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
         }
