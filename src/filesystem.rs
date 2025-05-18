@@ -28,7 +28,7 @@ macro_rules! subpath {
         pub fn $name() -> PathBuf {
             let path = csc_path().join($path);
             if !path.exists() {
-                fs::create_dir_all(&path).expect(&format!("Failed to create $name directory",));
+                fs::create_dir_all(&path).expect("Failed to create $name directory");
             }
             path
         }
