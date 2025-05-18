@@ -81,6 +81,7 @@ impl Trie {
         self.root.contains_key(word)
     }
 
+    #[must_use]
     pub fn to_vec(&self) -> Vec<String> {
         self.root.stream().into_str_keys().unwrap()
     }

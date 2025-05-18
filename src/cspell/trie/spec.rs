@@ -100,8 +100,9 @@ impl TrieBuilder {
                 .pos
                 .iter()
                 .position(|p| Rc::ptr_eq(p, node))
-                .map(|p| p as i64)
-                .unwrap_or(-1);
+                .map(i64::try_from)
+                .unwrap_or(Ok(-1))
+                .unwrap();
             let node_borrow = node.borrow();
             let mut child_ids: Vec<_> = node_borrow
                 .children

@@ -3,13 +3,13 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
-
+use std::ffi::OsStr;
 use anyhow::{Context, bail};
 
 pub fn get_file_extension(file: &Path) -> Option<String> {
     file.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_string())
+        .and_then(OsStr::to_str)
+        .map(ToString::to_string)
 }
 
 pub fn csc_path() -> PathBuf {

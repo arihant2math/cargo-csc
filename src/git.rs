@@ -75,7 +75,7 @@ pub fn clone<P: AsRef<Path>>(url: &str, path: P) -> Result<git2::Repository, git
     let mut co = git2::build::CheckoutBuilder::new();
     co.progress(|path, cur, total| {
         let mut state = state.borrow_mut();
-        state.path = path.map(|p| p.to_path_buf());
+        state.path = path.map(Path::to_path_buf);
         state.current = cur;
         state.total = total;
         print(&mut state);

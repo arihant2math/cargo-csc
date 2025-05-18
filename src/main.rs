@@ -36,6 +36,7 @@ use crate::{
     args::{ContextArgs, OutputFormat, TraceArgs},
     dictionary::{DictCacheStore, dict_cache_store_location},
 };
+use crate::settings::DictionaryName;
 
 pub type HashSet<T> = ahash::HashSet<T>;
 pub type HashMap<K, V> = ahash::HashMap<K, V>;
@@ -98,9 +99,8 @@ impl MergedSettings {
         let mut dictionaries = self
             .settings
             .dictionaries
-            .clone()
-            .into_iter()
-            .map(|s| s.name())
+            .iter()
+            .map(DictionaryName::name)
             .collect::<Vec<_>>();
         dictionaries.extend(self.args.extra_dictionaries());
         dictionaries
@@ -446,7 +446,7 @@ async fn main() -> anyhow::Result<()> {
                             .unwrap_or_default();
                         if Path::new(end)
                             .extension()
-                            .map_or(false, |ext| ext.eq_ignore_ascii_case("zip"))
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
                         {
                             let zip_path = store_path().join(end);
                             if zip_path.exists() {
