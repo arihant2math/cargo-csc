@@ -68,9 +68,14 @@ pub fn get_path_hash<P: AsRef<Path>>(path: P) -> anyhow::Result<String> {
                 let mut file_hasher = blake3::Hasher::new();
                 let file = fs::File::open(file_path).context("Failed to open file")?;
                 let mut reader = std::io::BufReader::new(file);
-                let mut bytes = Vec::with_capacity(reader.capacity());
-                let bytes_read = reader.read_to_end(&mut bytes)?;
-                file_hasher.update(&bytes[..bytes_read]);
+                let mut buffer = [0; 8192];
+                loop {
+                    let bytes_read = reader.read(&mut buffer)?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    file_hasher.update(&buffer[..bytes_read]);
+                }
                 hasher.update(file_hasher.finalize().as_bytes());
             }
         }
