@@ -118,7 +118,7 @@ pub fn fetch<'a>(
                 stats.received_bytes()
             );
         }
-        std::io::stdout().flush().unwrap();
+        let _ = std::io::stdout().flush();
         true
     });
 
