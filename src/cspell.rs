@@ -2,8 +2,9 @@ mod trie;
 
 use std::{fs, io::Write};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, anyhow};
 use git2::Repository;
+use tokio::task::JoinSet;
 pub use trie::CspellTrie;
 
 use crate::{
@@ -13,13 +14,15 @@ use crate::{
 
 const URL: &str = "https://github.com/arihant2math/cspell-dicts";
 
-pub fn import() -> anyhow::Result<()> {
+pub async fn import() -> anyhow::Result<()> {
     let repo_path = cspell_path().join("cspell-dicts");
     if !repo_path.exists() {
-        fs::create_dir_all(&repo_path).context(format!(
-            "Failed to create temporary directory: {}",
-            repo_path.display()
-        ))?;
+        tokio::fs::create_dir_all(&repo_path)
+            .await
+            .context(format!(
+                "Failed to create temporary directory: {}",
+                repo_path.display()
+            ))?;
 
         println!("Cloning {URL}");
         crate::git::clone(URL, &repo_path).with_context(|| format!("failed to clone: {URL}"))?;
@@ -37,7 +40,7 @@ pub fn import() -> anyhow::Result<()> {
             Err(e) => {
                 eprintln!("Failed to open temporary directory: {e}");
                 // Reclone
-                fs::remove_dir_all(&repo_path).ok();
+                tokio::fs::remove_dir_all(&repo_path).await?;
                 println!("Recloning {URL}");
                 crate::git::clone(URL, &repo_path)
                     .with_context(|| format!("failed to clone: {URL}"))?;
@@ -84,21 +87,27 @@ pub fn import() -> anyhow::Result<()> {
             dict_dir.file_name().unwrap().to_string_lossy()
         ));
         if store.exists() {
-            fs::remove_dir_all(&store)
+            tokio::fs::remove_dir_all(&store)
+                .await
                 .context(format!("Failed to remove directory: {}", store.display()))?;
         }
-        fs::create_dir_all(&store)
+        tokio::fs::create_dir_all(&store)
+            .await
             .context(format!("Failed to create directory: {}", store.display()))?;
 
         let mut config = dictionary::DictionaryConfig {
-            name: dict_dir.file_name().ok_or_else(|| {
-                bail!("Failed to get dictionary file name");
-            }).to_string_lossy().into(),
+            name: dict_dir
+                .file_name()
+                .ok_or_else(|| anyhow!("Failed to get dictionary file name"))?
+                .to_string_lossy()
+                .into(),
             description: Some("Imported from cspell".to_string()),
             paths: Vec::with_capacity(files.len()),
             case_sensitive: false,
             no_cache: false,
         };
+
+        let mut futures = JoinSet::new();
 
         for src in files {
             let file_name = src
@@ -107,12 +116,14 @@ pub fn import() -> anyhow::Result<()> {
                 .to_string_lossy()
                 .into_owned();
             let dst = store.join(&file_name);
-            fs::copy(&src, &dst).context(format!(
-                "Failed to copy file from {} to {}",
-                src.display(),
-                dst.display(),
-            ))?;
+            let copy_future = tokio::fs::copy(&src, &dst);
+            futures.spawn(copy_future);
             config.paths.push(file_name);
+        }
+        // Wait for all copy operations to complete
+        let output = futures.join_all().await;
+        for res in output {
+            res?;
         }
         // Write the config file
         let config_path = store.join("csc-config.json");
