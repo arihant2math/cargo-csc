@@ -1,9 +1,10 @@
 use std::{
+    ffi::OsStr,
     fs,
     io::Read,
     path::{Path, PathBuf},
 };
-use std::ffi::OsStr;
+
 use anyhow::{Context, bail};
 
 pub fn get_file_extension(file: &Path) -> Option<String> {
