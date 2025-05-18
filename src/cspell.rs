@@ -116,7 +116,7 @@ pub async fn import() -> anyhow::Result<()> {
                 .to_string_lossy()
                 .into_owned();
             let dst = store.join(&file_name);
-            let copy_future = tokio::fs::copy(&src, &dst);
+            let copy_future = tokio::fs::copy(src, dst);
             futures.spawn(copy_future);
             config.paths.push(file_name);
         }
