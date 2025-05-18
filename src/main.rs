@@ -16,6 +16,7 @@ use tokio::{sync::Mutex, task, time::Instant};
 use url::Url;
 
 mod args;
+mod autocorrect;
 mod code;
 mod cspell;
 mod dictionary;
@@ -34,9 +35,10 @@ pub use trie::Trie;
 
 use crate::{
     args::{ContextArgs, OutputFormat, TraceArgs},
+    code::handle_text,
     dictionary::{DictCacheStore, dict_cache_store_location},
+    settings::DictionaryName,
 };
-use crate::settings::DictionaryName;
 
 pub type HashSet<T> = ahash::HashSet<T>;
 pub type HashMap<K, V> = ahash::HashMap<K, V>;
@@ -188,17 +190,22 @@ async fn handle_file(
         } else {
             break;
         };
-        let (source_code, mut parser) = get_code(&file)
-            .await
-            .context(format!("Failed to get code for file: {}", file.display()))?;
+        let (source_code, mut parser) = get_code(&file).await.context(format!(
+            "Failed to get code or parser for file: {}",
+            file.display()
+        ))?;
 
         let dict = get_multi_trie(Some(&file), context.clone()).context(format!(
             "Failed to load dictionary set for file: {}",
             file.display()
         ))?;
-        let tree = parser.parse(&source_code, None).unwrap();
-        let root_node = Box::new(tree.root_node());
-        let typos = handle_node(&dict, &root_node, &source_code.into());
+        let typos = if let Some(ref mut parser) = parser {
+            let tree = parser.parse(&source_code, None).unwrap();
+            let root_node = Box::new(tree.root_node());
+            handle_node(&dict, &root_node, &source_code.into())
+        } else {
+            handle_text(&dict, &source_code.into())
+        };
         let result = CheckFileResult {
             file: file.clone(),
             typos,
@@ -346,7 +353,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn trace(args: &TraceArgs) -> anyhow::Result<()> {
+async fn trace(args: &TraceArgs) -> anyhow::Result<()> {
     let settings = Settings::load(args.settings.clone().map(|p| p.display().to_string()));
     // Generate context
     let context = Arc::new(SharedRuntimeContext::new(MergedSettings::new(
@@ -388,10 +395,12 @@ async fn cache(args: CacheCommand) -> anyhow::Result<()> {
         CacheCommand::Clear => {
             let cache_dir = cache_path();
             if cache_dir.exists() {
-                fs::remove_dir_all(&cache_dir).context(format!(
-                    "Failed to remove cache directory: {}",
-                    cache_dir.display()
-                ))?;
+                tokio::fs::remove_dir_all(&cache_dir)
+                    .await
+                    .context(format!(
+                        "Failed to remove cache directory: {}",
+                        cache_dir.display()
+                    ))?;
             } else {
                 eprintln!("Cache directory does not exist: {}", cache_dir.display());
             }
@@ -406,6 +415,129 @@ async fn cache(args: CacheCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn install(args: &args::InstallArgs) -> anyhow::Result<()> {
+    // Try path
+    enum InstallType {
+        Path(PathBuf),
+        Url(Url),
+    }
+    let path = PathBuf::from(&args.uri);
+    let install_type = if path.exists() {
+        InstallType::Path(path)
+    } else {
+        InstallType::Url(Url::parse(&args.uri)?)
+    };
+    match install_type {
+        InstallType::Path(ref path) => {
+            tokio::fs::copy(path, store_path().join(path.file_name().unwrap())).await?;
+            Ok(())
+        }
+        InstallType::Url(ref url) => {
+            let response = reqwest::get(url.clone()).await?;
+            if response.status().is_success() {
+                let content = response.bytes().await?.to_vec();
+                let end = url
+                    .path_segments()
+                    .and_then(|mut s| s.next_back())
+                    .unwrap_or_default();
+                if Path::new(end)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+                {
+                    let zip_path = store_path().join(end);
+                    if zip_path.exists() {
+                        if !args.yes {
+                            let confirm = Confirm::new("File already exists, overwrite?")
+                                .with_default(false)
+                                .prompt()?;
+                            if !confirm {
+                                println!("Aborting");
+                                return Ok(());
+                            }
+                        }
+                        if zip_path.is_dir() {
+                            tokio::fs::remove_dir_all(&zip_path)
+                                .context(format!(
+                                    "Failed to remove existing dir: {}",
+                                    zip_path.display()
+                                ))
+                                .await?;
+                        } else {
+                            tokio::fs::remove_file(&zip_path)
+                                .context(format!(
+                                    "Failed to remove existing file: {}",
+                                    zip_path.display()
+                                ))
+                                .await?;
+                        }
+                    }
+                    let mut file = fs::File::create(&zip_path)?;
+                    file.write_all(&content)?;
+                    let mut archive = zip::ZipArchive::new(fs::File::open(zip_path)?)?;
+                    let base_out_path = store_path().join(
+                        url.path_segments()
+                            .unwrap()
+                            .next_back()
+                            .unwrap()
+                            .strip_suffix(".zip")
+                            .unwrap(),
+                    );
+                    for i in 0..archive.len() {
+                        let mut file = archive.by_index(i)?;
+                        let outpath = base_out_path.join(file.name());
+                        if file.is_dir() {
+                            fs::create_dir_all(&outpath)?;
+                        } else {
+                            let mut outfile = fs::File::create(&outpath)?;
+                            std::io::copy(&mut file, &mut outfile)?;
+                        }
+                    }
+                    Ok(())
+                } else {
+                    let path = store_path().join(url.path_segments().unwrap().next_back().unwrap());
+                    if path == store_path() {
+                        bail!("Cannot install to cache directory");
+                    }
+                    if path.exists() {
+                        if !args.yes {
+                            let confirm = Confirm::new(&format!(
+                                "File {path} already exists, overwrite?",
+                                path = path.display()
+                            ))
+                            .with_default(false)
+                            .prompt()?;
+                            if !confirm {
+                                println!("Aborting");
+                                return Ok(());
+                            }
+                        }
+                        if path.is_dir() {
+                            fs::remove_dir_all(&path).context(format!(
+                                "Failed to remove existing dir: {}",
+                                path.display()
+                            ))?;
+                        } else {
+                            fs::remove_file(&path).context(format!(
+                                "Failed to remove existing file: {}",
+                                path.display()
+                            ))?;
+                        }
+                    }
+                    let mut file = fs::File::create(path)?;
+                    file.write_all(&content)?;
+                    Ok(())
+                }
+            } else {
+                bail!(
+                    "Failed to download file from {}: {}",
+                    url,
+                    response.status()
+                );
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
@@ -415,129 +547,16 @@ async fn main() -> anyhow::Result<()> {
             check(args).await?;
         }
         CliArgs::Trace(ref args) => {
-            trace(args)?;
+            trace(args).await?;
         }
         CliArgs::Cache(args) => {
             cache(args).await?;
         }
-        CliArgs::Install(args) => {
-            // Try path
-            enum InstallType {
-                Path(PathBuf),
-                Url(Url),
-            }
-            let path = PathBuf::from(&args.uri);
-            let install_type = if path.exists() {
-                InstallType::Path(path)
-            } else {
-                InstallType::Url(Url::parse(&args.uri)?)
-            };
-            match install_type {
-                InstallType::Path(ref path) => {
-                    fs::copy(path, store_path().join(path.file_name().unwrap()))?;
-                }
-                InstallType::Url(ref url) => {
-                    let response = reqwest::get(url.clone()).await?;
-                    if response.status().is_success() {
-                        let content = response.bytes().await?.to_vec();
-                        let end = url
-                            .path_segments()
-                            .and_then(|mut s| s.next_back())
-                            .unwrap_or_default();
-                        if Path::new(end)
-                            .extension()
-                            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
-                        {
-                            let zip_path = store_path().join(end);
-                            if zip_path.exists() {
-                                if !args.yes {
-                                    let confirm = Confirm::new("File already exists, overwrite?")
-                                        .with_default(false)
-                                        .prompt()?;
-                                    if !confirm {
-                                        println!("Aborting");
-                                        return Ok(());
-                                    }
-                                }
-                                if zip_path.is_dir() {
-                                    fs::remove_dir_all(&zip_path).context(format!(
-                                        "Failed to remove existing dir: {}",
-                                        zip_path.display()
-                                    ))?;
-                                } else {
-                                    fs::remove_file(&zip_path).context(format!(
-                                        "Failed to remove existing file: {}",
-                                        zip_path.display()
-                                    ))?;
-                                }
-                            }
-                            let mut file = fs::File::create(&zip_path)?;
-                            file.write_all(&content)?;
-                            let mut archive = zip::ZipArchive::new(fs::File::open(zip_path)?)?;
-                            let base_out_path = store_path().join(
-                                url.path_segments()
-                                    .unwrap()
-                                    .next_back()
-                                    .unwrap()
-                                    .strip_suffix(".zip")
-                                    .unwrap(),
-                            );
-                            for i in 0..archive.len() {
-                                let mut file = archive.by_index(i)?;
-                                let outpath = base_out_path.join(file.name());
-                                if file.is_dir() {
-                                    fs::create_dir_all(&outpath)?;
-                                } else {
-                                    let mut outfile = fs::File::create(&outpath)?;
-                                    std::io::copy(&mut file, &mut outfile)?;
-                                }
-                            }
-                        } else {
-                            let path = store_path()
-                                .join(url.path_segments().unwrap().next_back().unwrap());
-                            if path == store_path() {
-                                bail!("Cannot install to cache directory");
-                            }
-                            if path.exists() {
-                                if !args.yes {
-                                    let confirm = Confirm::new(&format!(
-                                        "File {path} already exists, overwrite?",
-                                        path = path.display()
-                                    ))
-                                    .with_default(false)
-                                    .prompt()?;
-                                    if !confirm {
-                                        println!("Aborting");
-                                        return Ok(());
-                                    }
-                                }
-                                if path.is_dir() {
-                                    fs::remove_dir_all(&path).context(format!(
-                                        "Failed to remove existing dir: {}",
-                                        path.display()
-                                    ))?;
-                                } else {
-                                    fs::remove_file(&path).context(format!(
-                                        "Failed to remove existing file: {}",
-                                        path.display()
-                                    ))?;
-                                }
-                            }
-                            let mut file = fs::File::create(path)?;
-                            file.write_all(&content)?;
-                        }
-                    } else {
-                        bail!(
-                            "Failed to download file from {}: {}",
-                            url,
-                            response.status()
-                        );
-                    }
-                }
-            }
+        CliArgs::Install(ref args) => {
+            install(args).await?;
         }
         CliArgs::ImportCspell => {
-            cspell::import()?;
+            cspell::import().await?;
         }
     }
     Ok(())
