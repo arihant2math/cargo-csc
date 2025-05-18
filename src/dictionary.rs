@@ -1,5 +1,4 @@
-use std::io::BufRead;
-use std::path::PathBuf;
+use std::{io::BufRead, path::PathBuf};
 
 use ahash::HashMapExt;
 use anyhow::{Context, bail};
@@ -139,6 +138,8 @@ pub struct DictionaryConfig {
     pub case_sensitive: bool,
     #[serde(default)]
     pub no_cache: bool,
+    #[serde(default)]
+    pub globs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -264,6 +265,50 @@ impl Dictionary {
                 Ok(vec![content.name])
             }
             Self::Rules(_) => Ok(vec![]),
+        }
+    }
+
+    pub fn get_globs(&self) -> anyhow::Result<Option<Vec<glob::Pattern>>> {
+        match self {
+            Self::File(path) => {
+                let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+                let pattern = glob::Pattern::new(&file_name)?;
+                Ok(Some(vec![pattern]))
+            }
+            Self::Directory(path) => {
+                let config_path = path.join("csc-config.json");
+                if !config_path.exists() {
+                    return Err(anyhow::anyhow!(
+                        "Dictionary config file does not exist: {}",
+                        config_path.display()
+                    ));
+                }
+                let content: DictionaryConfig =
+                    serde_hjson::from_reader(std::fs::File::open(config_path)?)?;
+                if content.globs.len() > 0 {
+                    let mut patterns = Vec::new();
+                    for glob in &content.globs {
+                        let pattern = glob::Pattern::new(glob)?;
+                        patterns.push(pattern);
+                    }
+                    Ok(Some(patterns))
+                } else {
+                    Ok(None)
+                }
+            }
+            Self::Custom { definition, .. } => {
+                if definition.globs.len() > 0 {
+                    let mut patterns = Vec::new();
+                    for glob in &definition.globs {
+                        let pattern = glob::Pattern::new(glob)?;
+                        patterns.push(pattern);
+                    }
+                    Ok(Some(patterns))
+                } else {
+                    Ok(None)
+                }
+            }
+            Self::Rules(_) | Self::Trie(_) => Ok(None),
         }
     }
 

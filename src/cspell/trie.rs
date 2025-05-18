@@ -1,6 +1,5 @@
-// mod v4;
-
 mod spec;
+// mod v4;
 
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};

@@ -16,7 +16,6 @@ aho-corasick = "1.1"
 anyhow = "1.0"
 bincode = "2.0"
 blake3 = "1.8"
-bytes = "1.10"
 cached = "0.55"
 clap = { version = "4.5", features = ["derive"] }
 dashmap = "6.1"

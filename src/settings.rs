@@ -127,6 +127,8 @@ pub struct CustomDictionaryDefinition {
     pub aliases: Vec<String>,
     #[serde(flatten)]
     pub typ: CustomDictionaryDefinitionType,
+    #[serde(default)]
+    pub globs: Vec<String>,
 }
 
 impl CustomDictionaryDefinition {

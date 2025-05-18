@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, io::Read, rc::Rc};
 
 use flate2::bufread::GzDecoder;
-
+use fst::MapBuilder;
 use crate::{Trie, trie::TrieOptions};
 
 #[derive(Debug)]
@@ -80,6 +80,7 @@ struct TrieBuilder {
     nodes: Vec<Rc<RefCell<TrieNode>>>,
     /// Current path in the tree.
     pos: Vec<Rc<RefCell<TrieNode>>>,
+    pos_string: String,
 }
 
 impl TrieBuilder {
@@ -88,6 +89,7 @@ impl TrieBuilder {
         Self {
             nodes: vec![root.clone()],
             pos: vec![root],
+            pos_string: String::new(),
         }
     }
 
@@ -135,12 +137,15 @@ impl TrieBuilder {
 
     /// Absolute jump to a node in the trie.
     fn jump_to(&mut self, idx: usize) {
-        let target = self.nodes[idx].clone();
-        self.pos.push(target);
+        let top = self.pos.last().unwrap();
+        let p = self.pos[self.pos.len() - 2].clone();
+        let mut p_mut = p.borrow_mut();
+        p_mut.children.insert(self.pos_string.chars().last().unwrap(), self.nodes[idx].clone());
     }
 
     /// Process a single character and update state.
     fn process_char(&mut self, c: char, header_base: u32, state: &mut ParseState) {
+        dbg!("start", c, &state, &self.pos_string);
         match state {
             ParseState::Escape => {
                 self.add_char(c);
@@ -158,36 +163,34 @@ impl TrieBuilder {
                 for _ in 0..count {
                     if self.pos.pop().is_none() {
                         self.dbg_state();
-                        panic!("No more nodes to pop");
+                        unreachable!("No more nodes to pop");
+                    } else {
+                        self.pos_string.pop();
+                    }
+                    if self.pos.is_empty() {
+                        self.dbg_state();
+                        unreachable!("No more nodes in path");
                     }
                 }
-                match c {
-                    '\\' => *state = ParseState::Escape,
-                    '$' => {
-                        if let Some(cur) = self.pos.last() {
-                            cur.borrow_mut().eow = true;
+                if !c.is_numeric() {
+                    match c {
+                        '\\' => *state = ParseState::Escape,
+                        '$' => {
+                            if let Some(cur) = self.pos.last() {
+                                cur.borrow_mut().eow = true;
+                            }
+                            *state = ParseState::Remove;
                         }
-                        *state = ParseState::Remove;
-                    }
-                    '<' => {
-                        self.pos.pop().unwrap();
-                        *state = ParseState::Remove;
-                    }
-                    '#' => {
-                        *state = ParseState::AbsoluteReference { chars: vec![c] };
-                    }
-                    d if d.is_ascii_digit() && d != '1' => {
-                        let n = d.to_digit(10).unwrap() - 1;
-                        for _ in 0..n {
-                            self.pos.pop().unwrap();
+                        '<' => {
+                            *state = ParseState::Remove;
                         }
-                        // stay in Remove
-                    }
-                    // any other character: exit Remove-mode and re-process it
-                    other => {
-                        *state = ParseState::InWord;
-                        // don’t pop here!
-                        self.process_char(other, header_base, state);
+                        '#' => {
+                            *state = ParseState::AbsoluteReference { chars: vec![c] };
+                        }
+                        other => {
+                            *state = ParseState::InWord;
+                            self.process_char(other, header_base, state);
+                        }
                     }
                 }
             }
@@ -197,7 +200,7 @@ impl TrieBuilder {
                     let idx = u32::from_str_radix(&number_str[1..], header_base)
                         .expect("Failed to convert number") as usize;
                     if idx < self.nodes.len() {
-                        self.jump_to(idx);
+                        self.jump_to(idx + 1);
                     } else {
                         self.dbg_state();
                         panic!("Index out of bounds: {idx}");
@@ -222,8 +225,8 @@ impl TrieBuilder {
                 _ => self.add_char(c),
             },
         }
-        dbg!(c, &state);
         self.dbg_state();
+        dbg!("end", c, &state, &self.pos_string);
     }
 
     /// Add a character as a child node to the last node in the current path.
@@ -232,6 +235,7 @@ impl TrieBuilder {
             let mut parent_borrow = parent.borrow_mut();
             if let Some(child) = parent_borrow.children.get(&c) {
                 self.pos.push(child.clone());
+                self.pos_string.push(c);
             } else {
                 // TODO: causes leak
                 let new_node = Rc::new(RefCell::new(TrieNode::new(c, false)));
@@ -265,7 +269,9 @@ impl TrieNode {
 
 /// Recursively convert the builder trie into the output Trie structure.
 fn convert_trie(builder_root: Rc<RefCell<TrieNode>>) -> Trie {
-    fn rec_convert(_node: &Rc<RefCell<TrieNode>>) -> fst::map::Map<Vec<u8>> {
+    const MAX_DEPTH: usize = 1024;
+    fn rec_convert(node: &Rc<RefCell<TrieNode>>, current: &mut String, builder: &mut MapBuilder<Vec<u8>>, depth: &mut usize) {
+        assert!(*depth < MAX_DEPTH, "Max depth exceeded, recursion limit reached");
         // let node_ref = node.borrow();
         // let mut out = if node_ref.eow {
         //     crate::trie::TrieNode::some_default()
@@ -276,9 +282,28 @@ fn convert_trie(builder_root: Rc<RefCell<TrieNode>>) -> Trie {
         //     out.children.insert(*ch, rec_convert(child));
         // }
         // out
-        todo!()
+        let node_ref = node.borrow();
+        if node_ref.eow {
+            builder.insert(current.as_bytes(), 0).unwrap();
+        }
+        let mut sorted_children: Vec<_> = node_ref
+            .children
+            .iter()
+            .collect();
+        sorted_children.sort_by(|a, b| a.0.cmp(b.0));
+        for (&ch, child) in sorted_children {
+            current.push(ch);
+            *depth += 1;
+            rec_convert(child, current, builder, depth);
+            current.pop();
+            *depth -= 1;
+        }
     }
-    let root_converted = rec_convert(&builder_root);
+    let mut builder = fst::map::MapBuilder::memory();
+    let mut current = String::new();
+    let mut depth = 0;
+    rec_convert(&builder_root, &mut current, &mut builder, &mut depth);
+    let root_converted = builder.into_map();
     Trie {
         root: root_converted,
         options: TrieOptions::default(),
@@ -414,11 +439,11 @@ mod tests {
             version: Version("TrieXv4".to_string()),
             base: 32,
         };
-        let input = vec![r"\'cause$5sup$3tis$2wa#9;<4\0th$2$".to_string()];
+        let input = vec![r"\'cause$5sup$3tis$2wa#9;".to_string()];
         let trie = parse_body(&input, &header);
         let mut v = trie.to_vec();
         v.sort();
-        assert_eq!(v, vec!["0", "0th", "'cause", "'sup", "'tis", "'twas"]);
+        assert_eq!(v, vec!["'cause", "'sup", "'tis", "'twas"]);
     }
 
     #[test]
@@ -439,7 +464,34 @@ mod tests {
         );
     }
 
-    // #[test]
+    #[test]
+    fn test_parse_body_absolute_reference_4() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 32,
+        };
+        let input = vec!["c$a#0;".to_string()];
+        let trie = parse_body(&input, &header);
+        let mut v = trie.to_vec();
+        v.sort();
+        assert_eq!(v, vec!["a", "c"]);
+    }
+
+    #[test]
+    fn test_parse_body_absolute_reference_5() {
+        let header = Header {
+            version: Version("TrieXv4".to_string()),
+            base: 32,
+        };
+        let input = vec!["ab$c#0;$".to_string()];
+        let trie = parse_body(&input, &header);
+        let mut v = trie.to_vec();
+        v.sort();
+        assert_eq!(v, vec!["ab", "ac"]);
+    }
+
+
+    #[test]
     fn test_small() {
         let path = r"D:\Documents\Programming\cargo-csc\test.trie";
         let lines = file_to_lines(path).unwrap();
@@ -452,7 +504,7 @@ mod tests {
         assert!(v.contains(&"'cause".to_string()));
     }
 
-    // #[test]
+    #[test]
     fn test_parse_en_us() {
         let path =
             r"C:\Users\ariha\.code-spellcheck\tmp\cspell-dicts\dictionaries\en_US\en_US.trie";

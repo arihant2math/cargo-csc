@@ -105,6 +105,7 @@ pub async fn import() -> anyhow::Result<()> {
             paths: Vec::with_capacity(files.len()),
             case_sensitive: false,
             no_cache: false,
+            globs: Vec::new(),
         };
 
         let mut futures = JoinSet::new();

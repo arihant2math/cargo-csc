@@ -456,19 +456,15 @@ async fn install(args: &args::InstallArgs) -> anyhow::Result<()> {
                             }
                         }
                         if zip_path.is_dir() {
-                            tokio::fs::remove_dir_all(&zip_path)
-                                .context(format!(
-                                    "Failed to remove existing dir: {}",
-                                    zip_path.display()
-                                ))
-                                .await?;
+                            tokio::fs::remove_dir_all(&zip_path).await.context(format!(
+                                "Failed to remove existing dir: {}",
+                                zip_path.display()
+                            ))?;
                         } else {
-                            tokio::fs::remove_file(&zip_path)
-                                .context(format!(
-                                    "Failed to remove existing file: {}",
-                                    zip_path.display()
-                                ))
-                                .await?;
+                            tokio::fs::remove_file(&zip_path).await.context(format!(
+                                "Failed to remove existing file: {}",
+                                zip_path.display()
+                            ))?;
                         }
                     }
                     let mut file = fs::File::create(&zip_path)?;
