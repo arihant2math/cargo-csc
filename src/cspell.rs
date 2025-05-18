@@ -2,7 +2,7 @@ mod trie;
 
 use std::{fs, io::Write};
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use git2::Repository;
 pub use trie::CspellTrie;
 
@@ -91,7 +91,9 @@ pub fn import() -> anyhow::Result<()> {
             .context(format!("Failed to create directory: {}", store.display()))?;
 
         let mut config = dictionary::DictionaryConfig {
-            name: dict_dir.file_name().unwrap().to_string_lossy().into(),
+            name: dict_dir.file_name().ok_or_else(|| {
+                bail!("Failed to get dictionary file name");
+            }).to_string_lossy().into(),
             description: Some("Imported from cspell".to_string()),
             paths: Vec::with_capacity(files.len()),
             case_sensitive: false,
