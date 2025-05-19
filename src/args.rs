@@ -177,6 +177,7 @@ pub enum CliArgs {
     #[command(subcommand)]
     Cache(CacheCommand),
     Trace(TraceArgs),
+    Lsp,
     Install(InstallArgs),
     /// Import cspell dictionaries
     ImportCspell,

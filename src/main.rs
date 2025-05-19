@@ -22,6 +22,8 @@ mod cspell;
 mod dictionary;
 mod filesystem;
 pub mod git;
+#[cfg(feature = "lsp")]
+mod lsp;
 mod multi_trie;
 mod settings;
 mod trie;
@@ -547,6 +549,14 @@ async fn main() -> anyhow::Result<()> {
         }
         CliArgs::Cache(args) => {
             cache(args).await?;
+        }
+        CliArgs::Lsp => {
+            #[cfg(feature = "lsp")]
+            lsp::lsp().await;
+            #[cfg(not(feature = "lsp"))]
+            {
+                eprintln!("LSP support is not enabled. Please enable the 'lsp' feature when building.");
+            }
         }
         CliArgs::Install(ref args) => {
             install(args).await?;
