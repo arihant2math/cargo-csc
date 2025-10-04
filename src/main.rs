@@ -18,7 +18,7 @@ use url::Url;
 mod args;
 mod autocorrect;
 mod code;
-mod cspell;
+mod repo;
 mod dictionary;
 mod filesystem;
 pub mod git;
@@ -72,27 +72,31 @@ impl MergedSettings {
         let mut dictionaries = Vec::with_capacity(
             self.args.extra_dictionaries().len() + self.settings.dictionary_definitions.len(),
         );
+        // Load the extra dictionaries (user-provided) first
         for extra in &self.args.extra_dictionaries() {
             if let Ok(dictionary) = Dictionary::new_with_path(PathBuf::from(extra)) {
                 dictionaries.push(dictionary);
             }
         }
+        // Load custom dictionary definitions from settings (defined directly in the config file)
         for def in &self.settings.dictionary_definitions {
             dictionaries.push(Dictionary::new_custom(def.clone(), self.root_path()));
         }
         // check store_path for dictionaries
-        for entry in fs::read_dir(store_path()).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            if let Some(ext) = path.extension()
-                && ext.to_str().unwrap() == "bin"
-            {
-                continue;
-            }
-            match Dictionary::new_with_path(path) {
-                Ok(dictionary) => dictionaries.push(dictionary),
-                Err(e) => {
-                    eprintln!("Failed to load dictionary from store: {e}");
+        for tld in fs::read_dir(store_path()).unwrap() {
+            for entry in fs::read_dir(tld.unwrap().path()).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if let Some(ext) = path.extension()
+                    && ext.to_str().unwrap() == "bin"
+                {
+                    continue;
+                }
+                match Dictionary::new_with_path(path) {
+                    Ok(dictionary) => dictionaries.push(dictionary),
+                    Err(e) => {
+                        eprintln!("Failed to load dictionary from store: {e}");
+                    }
                 }
             }
         }
@@ -563,8 +567,34 @@ async fn main() -> anyhow::Result<()> {
         CliArgs::Install(ref args) => {
             install(args).await?;
         }
-        CliArgs::ImportCspell => {
-            cspell::import().await?;
+        CliArgs::ImportDictionaries => {
+            repo::import().await?;
+        }
+        CliArgs::UnimportCspell => {
+            repo::unimport_cspell().await?;
+        }
+        CliArgs::RemoveAll => {
+            let store = store_path();
+            if store.exists() {
+                if !Confirm::new(&format!(
+                    "Are you sure you want to remove all installed custom dictionaries in {}?",
+                    store.display()
+                ))
+                .with_default(false)
+                .prompt()?
+                {
+                    println!("Aborting");
+                    return Ok(());
+                }
+                tokio::fs::remove_dir_all(&store)
+                    .await
+                    .context(format!(
+                        "Failed to remove directory: {}",
+                        store.display()
+                    ))?;
+            } else {
+                eprintln!("Store directory does not exist: {}", store.display());
+            }
         }
     }
     Ok(())

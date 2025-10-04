@@ -39,7 +39,7 @@ macro_rules! subpath {
 subpath!(store_path, "wordlists");
 subpath!(cache_path, "cache");
 subpath!(tmp_path, "tmp");
-subpath!(cspell_path, "custom-dicts/cspell");
+subpath!(repo_path, "custom-dicts/main");
 subpath!(download_path, "custom-dicts/download");
 subpath!(git_path, "custom-dicts/git");
 

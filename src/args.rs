@@ -179,6 +179,10 @@ pub enum CliArgs {
     Trace(TraceArgs),
     Lsp,
     Install(InstallArgs),
-    /// Import cspell dictionaries
-    ImportCspell,
+    /// Import first-party dictionaries
+    ImportDictionaries,
+    /// Unimport cspell dictionaries
+    UnimportCspell,
+    /// Remove all installed custom dictionaries
+    RemoveAll,
 }

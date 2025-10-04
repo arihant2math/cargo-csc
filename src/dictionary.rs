@@ -1,10 +1,10 @@
 use std::{io::BufRead, path::PathBuf};
 
 use ahash::HashMapExt;
-use anyhow::{Context, bail};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-use crate::{HashMap, Trie, filesystem, store_path};
+use crate::{filesystem, store_path, HashMap, Trie};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {
@@ -144,12 +144,15 @@ pub struct DictionaryConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Dictionary {
-    /// A dictionary that is loaded from a file
-    File(PathBuf),
+    /// A dictionary that is loaded from a plain-text file
+    Text(PathBuf),
+    // TODO: implement JSON dictionary support
+    // A dictionary that is loaded from a JSON file
+    // Json(PathBuf),
+    /// A dictionary that is loaded from a compiled trie file
+    Trie(PathBuf),
     /// A dictionary that is loaded from a directory
     Directory(PathBuf),
-    /// A cspell trie
-    Trie(PathBuf),
     /// Custom
     Custom {
         definition: crate::settings::CustomDictionaryDefinition,
@@ -175,8 +178,10 @@ impl Dictionary {
         }
         if path.is_dir() {
             Ok(Self::Directory(path))
-        } else if path.is_file() {
-            Ok(Self::File(path))
+        } else if path.is_file() && path.ends_with(".text") {
+            Ok(Self::Text(path))
+        } else if path.ends_with(".trie") {
+            Ok(Self::Trie(path))
         } else {
             Err(anyhow::anyhow!(
                 "Invalid dictionary path: {}",
@@ -248,7 +253,7 @@ impl Dictionary {
 
     pub fn get_names(&self) -> anyhow::Result<Vec<String>> {
         match self {
-            Self::File(path) | Self::Trie(path) => Ok(vec![
+            Self::Text(path) | Self::Trie(path) => Ok(vec![
                 path.file_stem().unwrap().to_string_lossy().to_string(),
             ]),
             Self::Custom { definition, .. } => Ok(vec![definition.name.clone()]),
@@ -270,7 +275,12 @@ impl Dictionary {
 
     pub fn get_globs(&self) -> anyhow::Result<Option<Vec<glob::Pattern>>> {
         match self {
-            Self::File(path) => {
+            Self::Text(path) => {
+                let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+                let pattern = glob::Pattern::new(&file_name)?;
+                Ok(Some(vec![pattern]))
+            }
+            Self::Trie(path) => {
                 let file_name = path.file_name().unwrap().to_string_lossy().to_string();
                 let pattern = glob::Pattern::new(&file_name)?;
                 Ok(Some(vec![pattern]))
@@ -308,16 +318,20 @@ impl Dictionary {
                     Ok(None)
                 }
             }
-            Self::Rules(_) | Self::Trie(_) => Ok(None),
+            Self::Rules(_) => Ok(None),
         }
     }
 
     fn compile_inner(&self) -> anyhow::Result<Trie> {
         match self {
-            Self::File(path) => {
+            Self::Text(path) => {
                 if let Some(cache) = self.load_from_cache(path)? {
                     return Ok(cache);
                 }
+            }
+            Self::Trie(path) => {
+                let trie = Trie::load_from_file(path)?;
+                return Ok(trie);
             }
             Self::Directory(path) => {
                 let config_path = path.join("csc-config.json");
@@ -336,19 +350,18 @@ impl Dictionary {
                 }
             }
             Self::Rules(_) | Self::Custom { .. } => {}
-            Self::Trie(path) => {
-                if let Some(cache) = self.load_from_cache(path)? {
-                    return Ok(cache);
-                }
-            }
         }
         match self {
-            Self::File(path) => {
+            Self::Text(path) => {
                 let rules = load_dictionary_format_from_file(path)?;
                 let trie = Trie::from(rules.as_ref());
                 if trie.options.cache {
                     Self::save_to_cache(&trie, path)?;
                 }
+                Ok(trie)
+            }
+            Self::Trie(path) => {
+                let trie = Trie::load_from_file(path)?;
                 Ok(trie)
             }
             Self::Custom { definition, root } => {
@@ -380,18 +393,6 @@ impl Dictionary {
                     let file_path = relative_path::RelativePath::new(&path_str);
                     let file_path = file_path.to_path(path);
                     if file_path.exists() {
-                        if file_path.extension().unwrap().to_str().unwrap() == "trie" {
-                            let mut trie = crate::cspell::CspellTrie::parse_trie(&file_path)?;
-                            if content.paths.len() != 1 {
-                                bail!("If trie is compiled, there can only be one path");
-                            }
-                            trie.options.case_sensitive = content.case_sensitive;
-                            trie.options.cache = !content.no_cache;
-                            if trie.options.cache {
-                                Self::save_to_cache(&trie, path)?;
-                            }
-                            return Ok(trie);
-                        }
                         let rules_part = load_dictionary_format_from_file(&file_path)?;
                         rules.extend(rules_part);
                     } else {
@@ -422,14 +423,6 @@ impl Dictionary {
                 }
                 new_rules.push(Rule::Command(Command::Cache(false)));
                 let trie = Trie::from(new_rules.as_ref());
-                Ok(trie)
-            }
-            Self::Trie(path) => {
-                let content = std::fs::read(path)?;
-                let trie = Trie::load(&content)?;
-                if trie.options.cache {
-                    Self::save_to_cache(&trie, path)?;
-                }
                 Ok(trie)
             }
         }
