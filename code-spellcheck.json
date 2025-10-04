@@ -6,20 +6,19 @@
     }
   ],
   "dictionaries": [
-    "custom",
-    "en-US",
-    "extra",
-    "rust",
-    "software_terms",
-    "software_tools",
-    "words"
+    "custom"
   ],
   "ignore_paths": [
     "**/target/**",
     "**/node_modules/**"
   ],
   "words": [
-    "wordlist",
-    "wordlists"
+    "autocorrect",
+    "autotag",
+    "damerau",
+    "hjson",
+    "strsim",
+    "repr",
+    "unimport"
   ]
 }

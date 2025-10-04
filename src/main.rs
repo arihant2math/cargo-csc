@@ -41,6 +41,7 @@ use crate::{
     dictionary::{DictCacheStore, dict_cache_store_location},
     settings::DictionaryName,
 };
+use crate::settings::CustomDictionaryDefinition;
 
 pub type HashSet<T> = ahash::HashSet<T>;
 pub type HashMap<K, V> = ahash::HashMap<K, V>;
@@ -103,14 +104,12 @@ impl MergedSettings {
         dictionaries
     }
 
-    fn base_dictionaries(&self) -> Vec<String> {
+    fn base_dictionaries(&self) -> Vec<DictionaryName> {
         let mut dictionaries = self
             .settings
             .dictionaries
-            .iter()
-            .map(DictionaryName::name)
-            .collect::<Vec<_>>();
-        dictionaries.extend(self.args.extra_dictionaries());
+            .clone();
+        dictionaries.extend(self.args.extra_dictionaries().iter().map(|s| DictionaryName::Simple(s.clone())));
         dictionaries
     }
 
@@ -143,7 +142,7 @@ impl SharedRuntimeContext {
         v.compile()
     }
 
-    fn get_base_dictionaries(&self) -> Vec<String> {
+    fn get_base_dictionaries(&self) -> Vec<DictionaryName> {
         self.settings.base_dictionaries()
     }
 
@@ -167,7 +166,33 @@ fn get_multi_trie<P: AsRef<Path>>(
         bail!("Path is a directory: {}", path.as_ref().display());
     }
     let mut trie = MultiTrie::new();
-    let tries = context.get_base_dictionaries();
+    let tries = {
+        let dictionaries = context.get_base_dictionaries();
+        let mut chosen = vec![];
+        for dictionary in dictionaries {
+            match &dictionary {
+                DictionaryName::Simple(name) => {
+                    chosen.push(name.clone());
+                }
+                DictionaryName::Detailed { name, globs } => {
+                    if let Some(ref path) = path {
+                        if globs.is_empty()
+                            || globs.iter().any(|g| {
+                                glob::Pattern::new(g)
+                                    .map(|p| p.matches_path(path.as_ref()))
+                                    .unwrap_or(false)
+                            })
+                        {
+                            chosen.push(name.clone());
+                        }
+                    } else {
+                        chosen.push(name.clone());
+                    }
+                }
+            }
+        }
+        chosen
+    };
 
     for name in tries {
         let trie_instance = context
@@ -196,6 +221,10 @@ async fn handle_file(
         } else {
             break;
         };
+        if file.ends_with(".png") || file.ends_with(".jpg") || file.ends_with(".jpeg") || file.ends_with(".gif") || file.ends_with(".bmp") || file.ends_with(".svg") {
+            // Skip images
+            continue;
+        }
         let (source_code, mut parser) = get_code(&file).await.context(format!(
             "Failed to get code or parser for file: {}",
             file.display()
@@ -229,7 +258,9 @@ async fn handle_file(
 
 fn load_dictionaries(context: Arc<SharedRuntimeContext>) -> anyhow::Result<()> {
     let c = context.get_dictionaries();
-    let base_dictionaries = context.get_base_dictionaries();
+    let base_dictionaries = context.get_base_dictionaries().iter().map(|p| {
+        p.name()
+    }).collect::<Vec<_>>();
     for dict in c {
         let names = dict.get_names()?;
         if !base_dictionaries.iter().any(|x| names.contains(x)) {
@@ -288,7 +319,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
         println!("Found {total_files} files");
     }
 
-    let (result_sender, mut result_receiver) = tokio::sync::mpsc::channel(256);
+    let (result_sender, mut result_receiver) = tokio::sync::mpsc::channel(512);
     let file_receiver = Arc::new(Mutex::new(file_receiver));
     let num_threads = context.settings.jobs();
     let threads = (0..num_threads)
@@ -389,10 +420,12 @@ async fn cache(args: CacheCommand) -> anyhow::Result<()> {
             let dict_dir = store_path();
             // List all files in the directory
             let mut files = vec![];
-            for entry in fs::read_dir(dict_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                files.push(path);
+            for tld in fs::read_dir(dict_dir)? {
+                for entry in fs::read_dir(tld.unwrap().path())? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    files.push(path);
+                }
             }
             for path in files {
                 let _ = Dictionary::new_with_path(path)?.compile()?;
@@ -435,7 +468,7 @@ async fn install(args: &args::InstallArgs) -> anyhow::Result<()> {
     };
     match install_type {
         InstallType::Path(ref path) => {
-            tokio::fs::copy(path, store_path().join(path.file_name().unwrap())).await?;
+            tokio::fs::copy(path, store_path().join("imported").join(path.file_name().unwrap())).await?;
             Ok(())
         }
         InstallType::Url(ref url) => {
@@ -450,7 +483,7 @@ async fn install(args: &args::InstallArgs) -> anyhow::Result<()> {
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
                 {
-                    let zip_path = store_path().join(end);
+                    let zip_path = store_path().join("imported").join(end);
                     if zip_path.exists() {
                         if !args.yes {
                             let confirm = Confirm::new("File already exists, overwrite?")
@@ -486,11 +519,11 @@ async fn install(args: &args::InstallArgs) -> anyhow::Result<()> {
                     );
                     for i in 0..archive.len() {
                         let mut file = archive.by_index(i)?;
-                        let outpath = base_out_path.join(file.name());
+                        let out_path = base_out_path.join(file.name());
                         if file.is_dir() {
-                            fs::create_dir_all(&outpath)?;
+                            fs::create_dir_all(&out_path)?;
                         } else {
-                            let mut outfile = fs::File::create(&outpath)?;
+                            let mut outfile = fs::File::create(&out_path)?;
                             std::io::copy(&mut file, &mut outfile)?;
                         }
                     }
@@ -498,7 +531,7 @@ async fn install(args: &args::InstallArgs) -> anyhow::Result<()> {
                 } else {
                     let path = store_path().join(url.path_segments().unwrap().next_back().unwrap());
                     if path == store_path() {
-                        bail!("Cannot install to cache directory");
+                        bail!("Cannot install directly to store directory");
                     }
                     if path.exists() {
                         if !args.yes {

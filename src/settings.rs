@@ -169,15 +169,10 @@ pub struct Settings {
 }
 
 impl Default for Settings {
+    // TODO: Support different locales
     fn default() -> Self {
         Self {
-            dictionaries: vec![
-                DictionaryName::Simple("extra".to_string()),
-                DictionaryName::Simple("en-US".to_string()),
-                DictionaryName::Simple("software_terms".to_string()),
-                DictionaryName::Simple("software_tools".to_string()),
-                DictionaryName::Simple("words".to_string()),
-            ],
+            dictionaries: Self::default_dictionaries(),
             dictionary_definitions: vec![],
             ignore_paths: vec![],
             words: vec![],
@@ -186,6 +181,25 @@ impl Default for Settings {
 }
 
 impl Settings {
+    fn default_dictionaries() -> Vec<DictionaryName> {
+        vec![
+            DictionaryName::Simple("English - American".to_string()),
+            DictionaryName::Simple("English - Shared".to_string()),
+            DictionaryName::Simple("People Names".to_string()),
+            DictionaryName::Simple("Common Public Licenses".to_string()),
+            DictionaryName::Simple("Scientific Terms US".to_string()),
+            DictionaryName::Simple("Software Terms".to_string()),
+            DictionaryName::Detailed {
+                name: "C/C++".to_string(),
+                globs: vec!["**/*.c".to_string(), "**/*.cpp".to_string(), "**/*.h".to_string(), "**/*.hpp".to_string(), "**/*.rs".to_string()],
+            },
+            DictionaryName::Detailed {
+                name: "Rust".to_string(),
+                globs: vec!["**/*.rs".to_string(), "**/Cargo.toml".to_string(), "**/Cargo.lock".to_string()],
+            },
+        ]
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -193,7 +207,13 @@ impl Settings {
 
     pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
         let data = fs::read_to_string(path)?;
-        let settings: Self = serde_hjson::from_str(&data)?;
+        let mut settings: Self = serde_hjson::from_str(&data)?;
+        let default_dicts = Self::default_dictionaries();
+        for dict in default_dicts {
+            if !settings.dictionaries.iter().any(|d| d.name() == dict.name()) {
+                settings.dictionaries.push(dict);
+            }
+        }
         Ok(settings)
     }
 
