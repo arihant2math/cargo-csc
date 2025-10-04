@@ -183,8 +183,11 @@ impl Default for Settings {
 impl Settings {
     fn default_dictionaries() -> Vec<DictionaryName> {
         vec![
+            DictionaryName::Simple("Company names".to_string()),
             DictionaryName::Simple("English - American".to_string()),
+            DictionaryName::Simple("English - British".to_string()),
             DictionaryName::Simple("English - Shared".to_string()),
+            DictionaryName::Simple("File Types".to_string()),
             DictionaryName::Simple("People Names".to_string()),
             DictionaryName::Simple("Common Public Licenses".to_string()),
             DictionaryName::Simple("Scientific Terms US".to_string()),
@@ -192,6 +195,18 @@ impl Settings {
             DictionaryName::Detailed {
                 name: "C/C++".to_string(),
                 globs: vec!["**/*.c".to_string(), "**/*.cpp".to_string(), "**/*.h".to_string(), "**/*.hpp".to_string(), "**/*.rs".to_string()],
+            },
+            DictionaryName::Detailed {
+                name: "CSS".to_string(),
+                globs: vec!["**/*.css".to_string(), "**/*.scss".to_string(), "**/*.sass".to_string(), "**/*.less".to_string(), "**/*.html".to_string()],
+            },
+            DictionaryName::Detailed {
+                name: "TypeScript/JavaScript".to_string(),
+                globs: vec!["**/*.js".to_string(), "**/*.jsx".to_string(), "**/*.ts".to_string(), "**/*.tsx".to_string(), "**/package.json".to_string(), "**/package-lock.json".to_string(), "**/yarn.lock".to_string()],
+            },
+            DictionaryName::Detailed {
+                name: "Python".to_string(),
+                globs: vec!["**/*.py".to_string(), "**/requirements.txt".to_string(), "**/Pipfile".to_string(), "**/Pipfile.lock".to_string()],
             },
             DictionaryName::Detailed {
                 name: "Rust".to_string(),

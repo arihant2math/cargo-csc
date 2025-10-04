@@ -41,7 +41,6 @@ use crate::{
     dictionary::{DictCacheStore, dict_cache_store_location},
     settings::DictionaryName,
 };
-use crate::settings::CustomDictionaryDefinition;
 
 pub type HashSet<T> = ahash::HashSet<T>;
 pub type HashMap<K, V> = ahash::HashMap<K, V>;
@@ -221,10 +220,6 @@ async fn handle_file(
         } else {
             break;
         };
-        if file.ends_with(".png") || file.ends_with(".jpg") || file.ends_with(".jpeg") || file.ends_with(".gif") || file.ends_with(".bmp") || file.ends_with(".svg") {
-            // Skip images
-            continue;
-        }
         let (source_code, mut parser) = get_code(&file).await.context(format!(
             "Failed to get code or parser for file: {}",
             file.display()

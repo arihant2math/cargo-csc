@@ -3,7 +3,6 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-
 use miette::{Diagnostic, NamedSource, SourceOffset, SourceSpan};
 use tokio::{fs::File, io, io::AsyncReadExt};
 use tree_sitter::Node;
@@ -12,7 +11,9 @@ pub async fn get_code(path: &PathBuf) -> anyhow::Result<(String, Option<tree_sit
     let file = File::open(path).await?;
     let mut reader = io::BufReader::new(file);
     let mut source_code = String::new();
-    reader.read_to_string(&mut source_code).await?;
+    let Ok(_) = reader.read_to_string(&mut source_code).await else {
+        return Ok((String::new(), None));
+    };
     let mut parser = tree_sitter::Parser::new();
     let mut found = true;
     match crate::filesystem::get_file_extension(path)
