@@ -3,7 +3,7 @@ A code spell-checker, written in rust. This project aims to be a cleaner and fas
 
 # Installation
 ```bash
-cargo install --git https://github.com/arihant2math/cargo-csc
+cargo install cargo-csc
 ```
 
 ## Installing Dictionaries
