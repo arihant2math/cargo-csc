@@ -8,14 +8,17 @@ cargo install --git https://github.com/arihant2math/cargo-csc
 
 ## Installing Dictionaries
 `cargo-csc` requires dictionaries to test words against.
-Most dictionaries (assuming they aren't stored by cspell as tries) can be imported with the following command:
+We now have a first-party dictionary repository: https://github.com/arihant2math/cargo-csc-dicts
+
+To install the first-party dictionaries, run:
+
 ```
-cargo-csc import-cspell
+cargo-csc import-dictionaries
 ```
 
 This command also updates the installed dictionaries if rerun.
 
-Any text files can be imported with `cargo-csc install <URL|PATH>`.
+Any additional text files you'd want to use as dictionaries (`words.txt` for example) can be imported with `cargo-csc install <URL|PATH>`.
 
 # CLI Usage Guide
 
@@ -90,12 +93,12 @@ cargo-csc install <URI>
   cargo-csc install https://example.com/dictionary.txt
   ```
 
-### **ImportCspell**
+### **ImportDictionaries**
 Imports dictionaries from the `cspell` tool.
 Currently this doesn't support tries.
 
 ```bash
-cargo-csc import-cspell
+cargo-csc import-dictionaries
 ```
 
 # Settings
@@ -127,4 +130,10 @@ cargo-csc import-cspell
     "wordlists"
   ]
 }
+```
+
+## Uninstalling
+Once uninstalled, you can remove the settings and cache folder with:
+```
+rm -rf ~/.code-spellcheck
 ```
