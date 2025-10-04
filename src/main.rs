@@ -598,9 +598,6 @@ async fn main() -> anyhow::Result<()> {
         CliArgs::ImportDictionaries => {
             repo::import().await?;
         }
-        CliArgs::UnimportCspell => {
-            repo::unimport_cspell().await?;
-        }
         CliArgs::RemoveAll => {
             let store = store_path();
             if store.exists() {

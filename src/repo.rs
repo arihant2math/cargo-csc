@@ -96,32 +96,3 @@ pub async fn import() -> anyhow::Result<()> {
     copy_tree(&dicts_path, store_path().join("first_party")).await?;
     Ok(())
 }
-
-pub async fn unimport_cspell() -> anyhow::Result<()> {
-    let repo_path = repo_path().parent().unwrap().join("cspell").join("cspell-dicts");
-    if repo_path.exists() {
-        tokio::fs::remove_dir_all(&repo_path)
-            .await
-            .context(format!(
-                "Failed to remove temporary directory: {}",
-                repo_path.display()
-            ))?;
-        println!("Removed cspell repo");
-    } else {
-        println!("No cspell repo to remove");
-    }
-    let store = store_path();
-    for entry in fs::read_dir(&store)? {
-        let entry = entry?;
-        let path = entry.path();
-        if let Some(fname) = path.file_name().and_then(|s| s.to_str())
-            && fname.starts_with("cspell_")
-        {
-            tokio::fs::remove_dir_all(&path)
-                .await
-                .context(format!("Failed to remove directory: {}", path.display()))?;
-            println!("Removed dictionary: {}", fname);
-        }
-    }
-    Ok(())
-}

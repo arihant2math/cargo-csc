@@ -181,8 +181,6 @@ pub enum CliArgs {
     Install(InstallArgs),
     /// Import first-party dictionaries
     ImportDictionaries,
-    /// Unimport cspell dictionaries
-    UnimportCspell,
     /// Remove all installed custom dictionaries
     RemoveAll,
 }
