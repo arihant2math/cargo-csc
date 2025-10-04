@@ -211,13 +211,13 @@ impl Dictionary {
             .to_string();
         let fs_hash = filesystem::get_path_hash(path)?;
         let cache_hash_store = DictCacheStore::load_from_file(dict_cache_store_location()?)?;
-        if let Some(hash) = cache_hash_store.0.get(&path_hash) {
-            if hash == &fs_hash {
-                let cache_path = filesystem::cache_path().join(format!("{path_hash}.bin"));
-                if cache_path.exists() {
-                    let trie = Trie::load_from_file(cache_path)?;
-                    return Ok(Some(trie));
-                }
+        if let Some(hash) = cache_hash_store.0.get(&path_hash)
+            && hash == &fs_hash
+        {
+            let cache_path = filesystem::cache_path().join(format!("{path_hash}.bin"));
+            if cache_path.exists() {
+                let trie = Trie::load_from_file(cache_path)?;
+                return Ok(Some(trie));
             }
         }
         Ok(None)
@@ -285,7 +285,7 @@ impl Dictionary {
                 }
                 let content: DictionaryConfig =
                     serde_hjson::from_reader(std::fs::File::open(config_path)?)?;
-                if content.globs.len() > 0 {
+                if !content.globs.is_empty() {
                     let mut patterns = Vec::new();
                     for glob in &content.globs {
                         let pattern = glob::Pattern::new(glob)?;
@@ -297,7 +297,7 @@ impl Dictionary {
                 }
             }
             Self::Custom { definition, .. } => {
-                if definition.globs.len() > 0 {
+                if !definition.globs.is_empty() {
                     let mut patterns = Vec::new();
                     for glob in &definition.globs {
                         let pattern = glob::Pattern::new(glob)?;
@@ -329,10 +329,10 @@ impl Dictionary {
                 }
                 let content: DictionaryConfig =
                     serde_hjson::from_reader(std::fs::File::open(config_path)?)?;
-                if !content.no_cache {
-                    if let Some(cache) = self.load_from_cache(path)? {
-                        return Ok(cache);
-                    }
+                if !content.no_cache
+                    && let Some(cache) = self.load_from_cache(path)?
+                {
+                    return Ok(cache);
                 }
             }
             Self::Rules(_) | Self::Custom { .. } => {}

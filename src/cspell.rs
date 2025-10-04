@@ -62,20 +62,20 @@ pub async fn import() -> anyhow::Result<()> {
             for file_entry in fs::read_dir(&dict_subdir)? {
                 let file_entry = file_entry?;
                 let p = file_entry.path();
-                if let Some(fname) = p.file_name().and_then(|s| s.to_str()) {
-                    if glob::Pattern::new("*.txt")?.matches(fname) {
-                        files.push(p.canonicalize()?);
-                    }
+                if let Some(fname) = p.file_name().and_then(|s| s.to_str())
+                    && glob::Pattern::new("*.txt")?.matches(fname)
+                {
+                    files.push(p.canonicalize()?);
                 }
             }
         }
         for file_entry in fs::read_dir(&dict_dir)? {
             let file_entry = file_entry?;
             let p = file_entry.path();
-            if let Some(fname) = p.file_name().and_then(|s| s.to_str()) {
-                if glob::Pattern::new("*.trie")?.matches(fname) {
-                    files.push(p.canonicalize()?);
-                }
+            if let Some(fname) = p.file_name().and_then(|s| s.to_str())
+                && glob::Pattern::new("*.trie")?.matches(fname)
+            {
+                files.push(p.canonicalize()?);
             }
         }
         if files.is_empty() {

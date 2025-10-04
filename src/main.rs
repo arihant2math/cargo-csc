@@ -84,10 +84,10 @@ impl MergedSettings {
         for entry in fs::read_dir(store_path()).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
-            if let Some(ext) = path.extension() {
-                if ext.to_str().unwrap() == "bin" {
-                    continue;
-                }
+            if let Some(ext) = path.extension()
+                && ext.to_str().unwrap() == "bin"
+            {
+                continue;
             }
             match Dictionary::new_with_path(path) {
                 Ok(dictionary) => dictionaries.push(dictionary),
@@ -157,10 +157,10 @@ fn get_multi_trie<P: AsRef<Path>>(
     path: Option<P>,
     context: Arc<SharedRuntimeContext>,
 ) -> anyhow::Result<MultiTrie> {
-    if let Some(ref path) = path {
-        if path.as_ref().is_dir() {
-            bail!("Path is a directory: {}", path.as_ref().display());
-        }
+    if let Some(ref path) = path
+        && path.as_ref().is_dir()
+    {
+        bail!("Path is a directory: {}", path.as_ref().display());
     }
     let mut trie = MultiTrie::new();
     let tries = context.get_base_dictionaries();
@@ -555,7 +555,9 @@ async fn main() -> anyhow::Result<()> {
             lsp::lsp().await;
             #[cfg(not(feature = "lsp"))]
             {
-                eprintln!("LSP support is not enabled. Please enable the 'lsp' feature when building.");
+                eprintln!(
+                    "LSP support is not enabled. Please enable the 'lsp' feature when building."
+                );
             }
         }
         CliArgs::Install(ref args) => {

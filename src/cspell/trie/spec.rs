@@ -2,6 +2,7 @@ use std::{cell::RefCell, collections::HashMap, io::Read, rc::Rc};
 
 use flate2::bufread::GzDecoder;
 use fst::MapBuilder;
+
 use crate::{Trie, trie::TrieOptions};
 
 #[derive(Debug)]
@@ -140,7 +141,10 @@ impl TrieBuilder {
         let top = self.pos.last().unwrap();
         let p = self.pos[self.pos.len() - 2].clone();
         let mut p_mut = p.borrow_mut();
-        p_mut.children.insert(self.pos_string.chars().last().unwrap(), self.nodes[idx].clone());
+        p_mut.children.insert(
+            self.pos_string.chars().last().unwrap(),
+            self.nodes[idx].clone(),
+        );
     }
 
     /// Process a single character and update state.
@@ -270,8 +274,16 @@ impl TrieNode {
 /// Recursively convert the builder trie into the output Trie structure.
 fn convert_trie(builder_root: Rc<RefCell<TrieNode>>) -> Trie {
     const MAX_DEPTH: usize = 1024;
-    fn rec_convert(node: &Rc<RefCell<TrieNode>>, current: &mut String, builder: &mut MapBuilder<Vec<u8>>, depth: &mut usize) {
-        assert!(*depth < MAX_DEPTH, "Max depth exceeded, recursion limit reached");
+    fn rec_convert(
+        node: &Rc<RefCell<TrieNode>>,
+        current: &mut String,
+        builder: &mut MapBuilder<Vec<u8>>,
+        depth: &mut usize,
+    ) {
+        assert!(
+            *depth < MAX_DEPTH,
+            "Max depth exceeded, recursion limit reached"
+        );
         // let node_ref = node.borrow();
         // let mut out = if node_ref.eow {
         //     crate::trie::TrieNode::some_default()
@@ -286,10 +298,7 @@ fn convert_trie(builder_root: Rc<RefCell<TrieNode>>) -> Trie {
         if node_ref.eow {
             builder.insert(current.as_bytes(), 0).unwrap();
         }
-        let mut sorted_children: Vec<_> = node_ref
-            .children
-            .iter()
-            .collect();
+        let mut sorted_children: Vec<_> = node_ref.children.iter().collect();
         sorted_children.sort_by(|a, b| a.0.cmp(b.0));
         for (&ch, child) in sorted_children {
             current.push(ch);
@@ -489,7 +498,6 @@ mod tests {
         v.sort();
         assert_eq!(v, vec!["ab", "ac"]);
     }
-
 
     #[test]
     fn test_small() {

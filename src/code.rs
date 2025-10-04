@@ -73,13 +73,13 @@ pub fn handle_node(words: &crate::MultiTrie, node: &Node, source_code: &Arc<str>
     let mut typos = Vec::new();
     if node.is_named() && node.child_count() == 0 {
         for word in text.split_whitespace() {
-            if word.len() > 1 {
-                if let Some(typo) = words.handle_identifier(word) {
-                    // TODO: Fix
-                    // let suggestion = words.suggestion(&typo);
-                    let typo = Typo::from_node(typo, *node, source_code.clone(), None);
-                    typos.push(typo);
-                }
+            if word.len() > 1
+                && let Some(typo) = words.handle_identifier(word)
+            {
+                // TODO: Fix
+                // let suggestion = words.suggestion(&typo);
+                let typo = Typo::from_node(typo, *node, source_code.clone(), None);
+                typos.push(typo);
             }
         }
     }
@@ -95,17 +95,17 @@ pub fn handle_text(words: &crate::MultiTrie, source_code: &Arc<str>) -> Vec<Typo
     let mut typos = Vec::new();
     for (line_count, line) in source_code.lines().enumerate() {
         for word in line.split_whitespace() {
-            if word.len() > 1 {
-                if let Some(typo) = words.handle_identifier(word) {
-                    typos.push(Typo {
-                        line: line_count + 1,
-                        column: line.find(word).unwrap_or(0) + 1,
-                        length: word.len(),
-                        word: typo,
-                        suggestion: None,
-                        source: source_code.clone(),
-                    });
-                }
+            if word.len() > 1
+                && let Some(typo) = words.handle_identifier(word)
+            {
+                typos.push(Typo {
+                    line: line_count + 1,
+                    column: line.find(word).unwrap_or(0) + 1,
+                    length: word.len(),
+                    word: typo,
+                    suggestion: None,
+                    source: source_code.clone(),
+                });
             }
         }
     }
