@@ -37,7 +37,7 @@ pub struct CheckArgs {
     /// The name of the CI environment to use (e.g. "github", "gitlab", "bitbucket")
     /// Using "github" will emit GitHub Actions annotations
     #[clap(long)]
-    pub ci: String,
+    pub ci: Option<String>,
     /// Which files/folders to exclude from the search
     #[clap(long)]
     pub exclude: Vec<String>,

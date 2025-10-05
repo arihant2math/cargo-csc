@@ -188,7 +188,7 @@ impl Settings {
             DictionaryName::Simple("English - British".to_string()),
             DictionaryName::Simple("English - Shared".to_string()),
             DictionaryName::Simple("File Types".to_string()),
-            DictionaryName::Simple("Fonts".to_string()),
+            DictionaryName::Simple("Font Names".to_string()),
             DictionaryName::Simple("People Names".to_string()),
             DictionaryName::Simple("Common Public Licenses".to_string()),
             DictionaryName::Simple("Scientific Terms US".to_string()),
