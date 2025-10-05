@@ -369,9 +369,8 @@ async fn check(args: CheckArgs) -> anyhow::Result<i32> {
                     .into();
                 println!("{diagnostic:?}");
                 if matches!(args.ci.as_ref().map(|s| s.as_str()), Some("github")) {
-                    // GitHub Actions and GitLab CI support the same annotation format
-                    // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-a-warning-message
-                    // https://docs.gitlab.com/ee/ci/yaml/#reporting-test-exceptions
+                    // GitHub Actions annotation format
+                    // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#setting-an-error-message
                     println!(
                         "::error file={},line={},col={},title=SPELLING-MISTAKE::Misspelled word: {}",
                         result.file.display(),
