@@ -6,7 +6,7 @@ use std::{
     thread,
     time::Duration,
 };
-
+use std::process::exit;
 use anyhow::{Context, bail};
 use args::{CacheCommand, CheckArgs, CliArgs};
 use clap::Parser;
@@ -272,7 +272,8 @@ fn load_dictionaries(context: Arc<SharedRuntimeContext>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn check(args: CheckArgs) -> anyhow::Result<()> {
+async fn check(args: CheckArgs) -> anyhow::Result<i32> {
+    let mut exit_code = 0;
     let settings = Settings::load(args.settings.clone().map(|p| p.display().to_string()));
     // Generate context
     let context = Arc::new(SharedRuntimeContext::new(MergedSettings::new(
@@ -306,7 +307,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     let files = files?;
     if files.is_empty() {
         eprintln!("No files found");
-        return Ok(());
+        return Ok(0);
     }
     let total_files = files.len();
     if total_files == 1 {
@@ -332,6 +333,9 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     if matches!(&output, OutputFormat::Json) {
         let mut received_results = vec![];
         while let Some(result) = result_receiver.recv().await {
+            if result.typos.len() > 0 {
+                exit_code = 1;
+            }
             received_results.push(result);
         }
         eprintln!("{}", serde_json::to_string_pretty(&received_results)?);
@@ -345,11 +349,13 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
                         file = result.file.display()
                     );
                 } else if result.typos.len() == 1 {
+                    exit_code = 1;
                     println!(
                         "[{counter}/{total_files}] {file}: Found 1 typo",
                         file = result.file.display()
                     );
                 } else {
+                    exit_code = 1;
                     println!(
                         "[{counter}/{total_files}] {file}: Found {} typos",
                         result.typos.len(),
@@ -362,6 +368,18 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
                     .to_diagnostic(&result.file.display().to_string())
                     .into();
                 println!("{diagnostic:?}");
+                if matches!(args.ci.as_str(), "github") {
+                    // GitHub Actions and GitLab CI support the same annotation format
+                    // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-a-warning-message
+                    // https://docs.gitlab.com/ee/ci/yaml/#reporting-test-exceptions
+                    println!(
+                        "::error file={},line={},col={},title=SPELLING-MISTAKE::Misspelled word: {}",
+                        result.file.display(),
+                        typo.line,
+                        typo.column,
+                        typo.word
+                    );
+                }
             }
         }
     }
@@ -388,7 +406,7 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     for thread in threads {
         thread.join().unwrap()?;
     }
-    Ok(())
+    Ok(exit_code)
 }
 
 async fn trace(args: &TraceArgs) -> anyhow::Result<()> {
@@ -580,7 +598,8 @@ async fn main() -> anyhow::Result<()> {
 
     match args {
         CliArgs::Check(args) => {
-            check(args).await?;
+            let exit_code = check(args).await?;
+            exit(exit_code);
         }
         CliArgs::Trace(ref args) => {
             trace(args).await?;

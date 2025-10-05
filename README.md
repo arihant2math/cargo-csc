@@ -32,6 +32,10 @@ cargo-csc <COMMAND> [OPTIONS]
 
 Run `cargo-csc --help` to see the general help menu.
 
+## CI Integration
+You can use `cargo-csc` in your CI pipelines to ensure code quality by checking for typos.
+For example, in a GitHub Actions workflow, you add the `--ci github` flag to the check command to emit GitHub annotations.
+
 ---
 
 ## Commands Overview

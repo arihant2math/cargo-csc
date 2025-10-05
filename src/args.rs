@@ -34,6 +34,10 @@ pub struct CheckArgs {
     pub verbose: bool,
     #[clap(short, long, default_value_t = false)]
     pub progress: bool,
+    /// The name of the CI environment to use (e.g. "github", "gitlab", "bitbucket")
+    /// Using "github" will emit GitHub Actions annotations
+    #[clap(long)]
+    pub ci: String,
     /// Which files/folders to exclude from the search
     #[clap(long)]
     pub exclude: Vec<String>,
@@ -51,7 +55,7 @@ pub struct CheckArgs {
     pub settings: Option<PathBuf>,
     #[clap(long)]
     pub output: Option<OutputFormat>,
-    
+
 }
 
 impl ContextArgs for CheckArgs {

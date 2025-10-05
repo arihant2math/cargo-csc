@@ -3,7 +3,8 @@
 # [Unreleased] - ReleaseDate
 
 - Handle "’" properly.
-- add preliminary support for json output (to stderr for now)
+- Add preliminary support for json output (to stderr for now)
+- Add `--ci <github|gitlab>` option to format output for CI systems (gitlab support is still WIP).
 
 # [v0.2.0] - 2025/4/10
 
