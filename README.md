@@ -32,6 +32,22 @@ cargo-csc <COMMAND> [OPTIONS]
 
 Run `cargo-csc --help` to see the general help menu.
 
+Example:
+```bash
+cargo-csc % cargo-csc check src/
+Found 12 files
+× TypoDiagnostic
+╭─[src/args.rs:41:8]
+40 │     pub ci: Option<String>,
+41 │     /// Which files/folders to exclde from the search
+·        ───────────────────────┬───────────────────────
+·                               ╰── Typo here
+42 │     #[clap(long)]
+43 │     pub exclude: Vec<String>,
+╰────
+help: Unknown word `exclde`.
+```
+
 ## CI Integration
 You can use `cargo-csc` in your CI pipelines to ensure code quality by checking for typos.
 For example, in a GitHub Actions workflow, you add the `--ci github` flag to the check command to emit GitHub annotations.
