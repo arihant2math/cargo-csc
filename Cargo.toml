@@ -16,14 +16,12 @@ lsp = ["dep:tower-lsp"]
 
 [dependencies]
 ahash = "0.8"
-aho-corasick = "1.1"
 anyhow = "1.0"
 bincode = "2.0"
 blake3 = "1.8"
 cached = "0.56"
 clap = { version = "4.5", features = ["derive"] }
 dashmap = "6.1"
-flate2 = "1.1"
 fst = { version = "0.4", features = ["levenshtein"] }
 git2 = "0.20"
 glob = "0.3"
@@ -31,14 +29,12 @@ ignore = "0.4"
 inquire = "0.9.1"
 miette = { version = "7.6", features = ["fancy", "syntect-highlighter"] }
 num_cpus = "1.16"
-regex = "1"
 relative-path = "2.0"
 reqwest = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde-hjson = "1.1"
 serde_json = "1.0"
 strsim = "0.11"
-thiserror = "2.0"
 tokio = { version = "1", features = ["full"] }
 tower-lsp = { version = "0.20", optional = true }
 tree-sitter = "0.25"
