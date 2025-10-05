@@ -350,19 +350,19 @@ async fn check(args: CheckArgs) -> anyhow::Result<i32> {
             counter += 1;
             if context.settings.verbose() || args.progress {
                 if result.typos.is_empty() {
-                    println!(
+                    eprintln!(
                         "[{counter}/{total_files}] {file}: No typos found",
                         file = result.file.display()
                     );
                 } else if result.typos.len() == 1 {
                     exit_code = 1;
-                    println!(
+                    eprintln!(
                         "[{counter}/{total_files}] {file}: Found 1 typo",
                         file = result.file.display()
                     );
                 } else {
                     exit_code = 1;
-                    println!(
+                    eprintln!(
                         "[{counter}/{total_files}] {file}: Found {} typos",
                         result.typos.len(),
                         file = result.file.display()
