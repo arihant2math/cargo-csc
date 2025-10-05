@@ -150,6 +150,7 @@ impl SharedRuntimeContext {
     }
 }
 
+#[derive(serde::Serialize)]
 struct CheckFileResult {
     file: PathBuf,
     typos: Vec<Typo>,
@@ -329,34 +330,39 @@ async fn check(args: CheckArgs) -> anyhow::Result<()> {
     drop(result_sender);
     let output = context.settings.args.output().unwrap_or(OutputFormat::Text);
     if matches!(&output, OutputFormat::Json) {
-        todo!();
-    }
-    while let Some(result) = result_receiver.recv().await {
-        counter += 1;
-        if context.settings.verbose() || args.progress {
-            if result.typos.is_empty() {
-                println!(
-                    "[{counter}/{total_files}] {file}: No typos found",
-                    file = result.file.display()
-                );
-            } else if result.typos.len() == 1 {
-                println!(
-                    "[{counter}/{total_files}] {file}: Found 1 typo",
-                    file = result.file.display()
-                );
-            } else {
-                println!(
-                    "[{counter}/{total_files}] {file}: Found {} typos",
-                    result.typos.len(),
-                    file = result.file.display()
-                );
-            }
+        let mut received_results = vec![];
+        while let Some(result) = result_receiver.recv().await {
+            received_results.push(result);
         }
-        for typo in &result.typos {
-            let diagnostic: miette::Report = typo
-                .to_diagnostic(&result.file.display().to_string())
-                .into();
-            println!("{diagnostic:?}");
+        eprintln!("{}", serde_json::to_string_pretty(&received_results)?);
+    } else {
+        while let Some(result) = result_receiver.recv().await {
+            counter += 1;
+            if context.settings.verbose() || args.progress {
+                if result.typos.is_empty() {
+                    println!(
+                        "[{counter}/{total_files}] {file}: No typos found",
+                        file = result.file.display()
+                    );
+                } else if result.typos.len() == 1 {
+                    println!(
+                        "[{counter}/{total_files}] {file}: Found 1 typo",
+                        file = result.file.display()
+                    );
+                } else {
+                    println!(
+                        "[{counter}/{total_files}] {file}: Found {} typos",
+                        result.typos.len(),
+                        file = result.file.display()
+                    );
+                }
+            }
+            for typo in &result.typos {
+                let diagnostic: miette::Report = typo
+                    .to_diagnostic(&result.file.display().to_string())
+                    .into();
+                println!("{diagnostic:?}");
+            }
         }
     }
 

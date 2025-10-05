@@ -1,6 +1,7 @@
 # Unreleased
 
 - Handle "’" properly.
+- add preliminary support for json output (to stderr for now)
 
 # [v0.2.0] - 2025/4/10
 

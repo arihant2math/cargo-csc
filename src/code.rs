@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 use miette::{Diagnostic, NamedSource, SourceOffset, SourceSpan};
+use serde::Serialize;
 use tokio::{fs::File, io, io::AsyncReadExt};
 use tree_sitter::Node;
 
@@ -115,13 +116,15 @@ pub fn handle_text(words: &crate::MultiTrie, source_code: &Arc<str>) -> Vec<Typo
     typos
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Typo {
     pub line: usize,
     pub column: usize,
     pub length: usize,
     pub word: String,
+    #[serde(skip_serializing)]
     pub suggestion: Option<String>,
+    #[serde(skip_serializing)]
     pub source: Arc<str>,
 }
 

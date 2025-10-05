@@ -4,7 +4,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum OutputFormat {
-    /// JSON output
+    /// JSON output (to stderr)
     Json,
     /// Text output
     Text,
@@ -51,6 +51,7 @@ pub struct CheckArgs {
     pub settings: Option<PathBuf>,
     #[clap(long)]
     pub output: Option<OutputFormat>,
+    
 }
 
 impl ContextArgs for CheckArgs {
