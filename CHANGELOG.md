@@ -1,3 +1,7 @@
+# Unreleased
+
+- Handle "’" properly.
+
 # [v0.2.0] - 2025/4/10
 
 - Added first-party dictionary repository.
