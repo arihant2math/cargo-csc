@@ -1,4 +1,6 @@
-# Unreleased
+<!-- next-header -->
+
+# [Unreleased] - ReleaseDate
 
 - Handle "’" properly.
 - add preliminary support for json output (to stderr for now)
