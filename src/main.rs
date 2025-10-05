@@ -309,12 +309,6 @@ async fn check(args: CheckArgs) -> anyhow::Result<i32> {
         eprintln!("No files found");
         return Ok(0);
     }
-    let total_files = files.len();
-    if total_files == 1 {
-        println!("Found 1 file");
-    } else {
-        println!("Found {total_files} files");
-    }
 
     let (result_sender, mut result_receiver) = tokio::sync::mpsc::channel(512);
     let file_receiver = Arc::new(Mutex::new(file_receiver));
@@ -338,8 +332,14 @@ async fn check(args: CheckArgs) -> anyhow::Result<i32> {
             }
             received_results.push(result);
         }
-        eprintln!("{}", serde_json::to_string_pretty(&received_results)?);
+        println!("{}", serde_json::to_string_pretty(&received_results)?);
     } else {
+        let total_files = files.len();
+        if total_files == 1 {
+            println!("Found 1 file");
+        } else {
+            println!("Found {total_files} files");
+        }
         while let Some(result) = result_receiver.recv().await {
             counter += 1;
             if context.settings.verbose() || args.progress {
@@ -392,11 +392,11 @@ async fn check(args: CheckArgs) -> anyhow::Result<i32> {
     loop {
         let now = Instant::now();
         if !printed && now - start > Duration::from_secs(1) {
-            println!("Waiting for threads to finish...");
+            eprintln!("Waiting for threads to finish...");
             printed = true;
         }
         if now - start > Duration::from_secs(5) {
-            println!("Threads are taking too long to finish, exiting...");
+            eprintln!("Threads are taking too long to finish, exiting...");
             std::process::exit(1);
         }
         if threads.iter().all(thread::JoinHandle::is_finished) {
@@ -428,7 +428,8 @@ async fn trace(args: &TraceArgs) -> anyhow::Result<()> {
         }
     }
     if !found {
-        println!("Did not find \'{}\' in any dictionary", args.word);
+        eprintln!("Did not find \'{}\' in any dictionary", args.word);
+        exit(1);
     }
     Ok(())
 }
@@ -509,7 +510,7 @@ async fn install(args: &args::InstallArgs) -> anyhow::Result<()> {
                                 .with_default(false)
                                 .prompt()?;
                             if !confirm {
-                                println!("Aborting");
+                                eprintln!("Aborting");
                                 return Ok(());
                             }
                         }
@@ -561,7 +562,7 @@ async fn install(args: &args::InstallArgs) -> anyhow::Result<()> {
                             .with_default(false)
                             .prompt()?;
                             if !confirm {
-                                println!("Aborting");
+                                eprintln!("Aborting");
                                 return Ok(());
                             }
                         }
@@ -633,8 +634,8 @@ async fn main() -> anyhow::Result<()> {
                 .with_default(false)
                 .prompt()?
                 {
-                    println!("Aborting");
-                    return Ok(());
+                    eprintln!("Aborting");
+                    exit(1);
                 }
                 tokio::fs::remove_dir_all(&store)
                     .await

@@ -38,7 +38,7 @@ pub async fn copy_tree<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -> Result
                         join_set.spawn(async {fs::copy(path, dest_path)});
                     }
                     None => {
-                        println!("failed: {:?}", path);
+                        eprintln!("failed: {:?}", path);
                     }
                 }
             }
