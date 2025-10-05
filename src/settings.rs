@@ -196,31 +196,71 @@ impl Settings {
             DictionaryName::Simple("NPM".to_string()),
             DictionaryName::Detailed {
                 name: ".Net".to_string(),
-                globs: vec!["**/*.cs".to_string(), "**/*.fs".to_string(), "**/*.vb".to_string()],
+                globs: vec![
+                    "**/*.cs".to_string(),
+                    "**/*.fs".to_string(),
+                    "**/*.vb".to_string(),
+                ],
             },
             DictionaryName::Detailed {
                 name: "C/C++".to_string(),
-                globs: vec!["**/*.c".to_string(), "**/*.cpp".to_string(), "**/*.h".to_string(), "**/*.hpp".to_string(), "**/*.rs".to_string()],
+                globs: vec![
+                    "**/*.c".to_string(),
+                    "**/*.cpp".to_string(),
+                    "**/*.h".to_string(),
+                    "**/*.hpp".to_string(),
+                    "**/*.rs".to_string(),
+                ],
             },
             DictionaryName::Detailed {
                 name: "CSS".to_string(),
-                globs: vec!["**/*.css".to_string(), "**/*.scss".to_string(), "**/*.sass".to_string(), "**/*.less".to_string(), "**/*.html".to_string()],
+                globs: vec![
+                    "**/*.css".to_string(),
+                    "**/*.scss".to_string(),
+                    "**/*.sass".to_string(),
+                    "**/*.less".to_string(),
+                    "**/*.html".to_string(),
+                ],
             },
             DictionaryName::Detailed {
                 name: "HTML".to_string(),
-                globs: vec!["**/*.css".to_string(), "**/*.scss".to_string(), "**/*.sass".to_string(), "**/*.less".to_string(), "**/*.html".to_string()],
+                globs: vec![
+                    "**/*.css".to_string(),
+                    "**/*.scss".to_string(),
+                    "**/*.sass".to_string(),
+                    "**/*.less".to_string(),
+                    "**/*.html".to_string(),
+                ],
             },
             DictionaryName::Detailed {
                 name: "TypeScript/JavaScript".to_string(),
-                globs: vec!["**/*.js".to_string(), "**/*.jsx".to_string(), "**/*.ts".to_string(), "**/*.tsx".to_string(), "**/package.json".to_string(), "**/package-lock.json".to_string(), "**/yarn.lock".to_string(), "**/*.html".to_string()],
+                globs: vec![
+                    "**/*.js".to_string(),
+                    "**/*.jsx".to_string(),
+                    "**/*.ts".to_string(),
+                    "**/*.tsx".to_string(),
+                    "**/package.json".to_string(),
+                    "**/package-lock.json".to_string(),
+                    "**/yarn.lock".to_string(),
+                    "**/*.html".to_string(),
+                ],
             },
             DictionaryName::Detailed {
                 name: "Python".to_string(),
-                globs: vec!["**/*.py".to_string(), "**/requirements.txt".to_string(), "**/Pipfile".to_string(), "**/Pipfile.lock".to_string()],
+                globs: vec![
+                    "**/*.py".to_string(),
+                    "**/requirements.txt".to_string(),
+                    "**/Pipfile".to_string(),
+                    "**/Pipfile.lock".to_string(),
+                ],
             },
             DictionaryName::Detailed {
                 name: "Rust".to_string(),
-                globs: vec!["**/*.rs".to_string(), "**/Cargo.toml".to_string(), "**/Cargo.lock".to_string()],
+                globs: vec![
+                    "**/*.rs".to_string(),
+                    "**/Cargo.toml".to_string(),
+                    "**/Cargo.lock".to_string(),
+                ],
             },
         ]
     }
@@ -235,7 +275,11 @@ impl Settings {
         let mut settings: Self = serde_hjson::from_str(&data)?;
         let default_dicts = Self::default_dictionaries();
         for dict in default_dicts {
-            if !settings.dictionaries.iter().any(|d| d.name() == dict.name()) {
+            if !settings
+                .dictionaries
+                .iter()
+                .any(|d| d.name() == dict.name())
+            {
                 settings.dictionaries.push(dict);
             }
         }

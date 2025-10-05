@@ -2,11 +2,12 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    process::exit,
     sync::Arc,
     thread,
     time::Duration,
 };
-use std::process::exit;
+
 use anyhow::{Context, bail};
 use args::{CacheCommand, CheckArgs, CliArgs};
 use clap::Parser;
@@ -18,13 +19,13 @@ use url::Url;
 mod args;
 mod autocorrect;
 mod code;
-mod repo;
 mod dictionary;
 mod filesystem;
 pub mod git;
 #[cfg(feature = "lsp")]
 mod lsp;
 mod multi_trie;
+mod repo;
 mod settings;
 mod trie;
 
@@ -78,7 +79,8 @@ impl MergedSettings {
                 dictionaries.push(dictionary);
             }
         }
-        // Load custom dictionary definitions from settings (defined directly in the config file)
+        // Load custom dictionary definitions from settings (defined directly in the
+        // config file)
         for def in &self.settings.dictionary_definitions {
             dictionaries.push(Dictionary::new_custom(def.clone(), self.root_path()));
         }
@@ -104,11 +106,13 @@ impl MergedSettings {
     }
 
     fn base_dictionaries(&self) -> Vec<DictionaryName> {
-        let mut dictionaries = self
-            .settings
-            .dictionaries
-            .clone();
-        dictionaries.extend(self.args.extra_dictionaries().iter().map(|s| DictionaryName::Simple(s.clone())));
+        let mut dictionaries = self.settings.dictionaries.clone();
+        dictionaries.extend(
+            self.args
+                .extra_dictionaries()
+                .iter()
+                .map(|s| DictionaryName::Simple(s.clone())),
+        );
         dictionaries
     }
 
@@ -254,9 +258,11 @@ async fn handle_file(
 
 fn load_dictionaries(context: Arc<SharedRuntimeContext>) -> anyhow::Result<()> {
     let c = context.get_dictionaries();
-    let base_dictionaries = context.get_base_dictionaries().iter().map(|p| {
-        p.name()
-    }).collect::<Vec<_>>();
+    let base_dictionaries = context
+        .get_base_dictionaries()
+        .iter()
+        .map(|p| p.name())
+        .collect::<Vec<_>>();
     for dict in c {
         let names = dict.get_names()?;
         if !base_dictionaries.iter().any(|x| names.contains(x)) {
@@ -487,7 +493,13 @@ async fn install(args: &args::InstallArgs) -> anyhow::Result<()> {
     };
     match install_type {
         InstallType::Path(ref path) => {
-            tokio::fs::copy(path, store_path().join("imported").join(path.file_name().unwrap())).await?;
+            tokio::fs::copy(
+                path,
+                store_path()
+                    .join("imported")
+                    .join(path.file_name().unwrap()),
+            )
+            .await?;
             Ok(())
         }
         InstallType::Url(ref url) => {
@@ -638,10 +650,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 tokio::fs::remove_dir_all(&store)
                     .await
-                    .context(format!(
-                        "Failed to remove directory: {}",
-                        store.display()
-                    ))?;
+                    .context(format!("Failed to remove directory: {}", store.display()))?;
             } else {
                 eprintln!("Store directory does not exist: {}", store.display());
             }

@@ -4,7 +4,7 @@ use ahash::HashMapExt;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-use crate::{filesystem, store_path, HashMap, Trie};
+use crate::{HashMap, Trie, filesystem, store_path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {

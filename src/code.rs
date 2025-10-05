@@ -3,6 +3,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+
 use miette::{Diagnostic, NamedSource, SourceOffset, SourceSpan};
 use serde::Serialize;
 use tokio::{fs::File, io, io::AsyncReadExt};

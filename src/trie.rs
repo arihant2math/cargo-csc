@@ -86,8 +86,9 @@ impl Trie {
         self.root.stream().into_str_keys().unwrap()
     }
 
-    /// Find the closest word in the trie to the given word using Levenshtein distance.
-    /// Returns None if the trie is empty or no words are within the distance of 1.
+    /// Find the closest word in the trie to the given word using Levenshtein
+    /// distance. Returns None if the trie is empty or no words are within
+    /// the distance of 1.
     pub fn check(&self, word: &str) -> anyhow::Result<Option<String>> {
         let lev = Levenshtein::new(word, 1)?;
         let stream = self.root.search(lev).into_stream();

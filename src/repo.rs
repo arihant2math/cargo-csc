@@ -1,11 +1,18 @@
-use anyhow::{anyhow, Context};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use anyhow::{Context, anyhow};
 use git2::Repository;
-use std::path::{Path, PathBuf};
-use std::fs;
 use tokio::task::JoinSet;
+
 use crate::filesystem::{repo_path, store_path};
 
-pub async fn copy_tree<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -> Result<(), std::io::Error> {
+pub async fn copy_tree<U: AsRef<Path>, V: AsRef<Path>>(
+    from: U,
+    to: V,
+) -> Result<(), std::io::Error> {
     let mut stack = vec![PathBuf::from(from.as_ref())];
 
     let output_root = PathBuf::from(to.as_ref());
@@ -35,7 +42,7 @@ pub async fn copy_tree<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -> Result
                 match path.file_name() {
                     Some(filename) => {
                         let dest_path = dest.join(filename);
-                        join_set.spawn(async {fs::copy(path, dest_path)});
+                        join_set.spawn(async { fs::copy(path, dest_path) });
                     }
                     None => {
                         eprintln!("failed: {:?}", path);
